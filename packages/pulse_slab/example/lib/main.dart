@@ -55,7 +55,9 @@ class _TelemetryDashboard extends StatefulWidget {
 
 class _TelemetryDashboardState extends State<_TelemetryDashboard> {
   static const int _sensorCount = 24;
-  static const int _maximumTickBatch = 1024;
+  static const int _minimumUpdatesPerSecond = 200;
+  static const int _maximumUpdatesPerSecond = 1000000;
+  static const int _maximumTickBatch = 32768;
 
   final math.Random _random = math.Random(7);
   final Stopwatch _clock = Stopwatch();
@@ -266,6 +268,9 @@ class _TelemetryDashboardState extends State<_TelemetryDashboard> {
               _ControlCard(
                 isRunning: _isRunning,
                 targetUpdatesPerSecond: _targetUpdatesPerSecond,
+                minimumUpdatesPerSecond: _minimumUpdatesPerSecond,
+                maximumUpdatesPerSecond: _maximumUpdatesPerSecond,
+                maximumTickBatch: _maximumTickBatch,
                 onStart: _start,
                 onPause: _pause,
                 onReset: _reset,
@@ -392,9 +397,20 @@ class _MetricTile extends StatelessWidget {
 }
 
 class _ControlCard extends StatelessWidget {
+  static const List<_RatePreset> _ratePresets = <_RatePreset>[
+    _RatePreset('10k / s', 10000),
+    _RatePreset('25k / s', 25000),
+    _RatePreset('100k / s', 100000),
+    _RatePreset('500k / s', 500000),
+    _RatePreset('1M / s', 1000000),
+  ];
+
   const _ControlCard({
     required this.isRunning,
     required this.targetUpdatesPerSecond,
+    required this.minimumUpdatesPerSecond,
+    required this.maximumUpdatesPerSecond,
+    required this.maximumTickBatch,
     required this.onStart,
     required this.onPause,
     required this.onReset,
@@ -403,6 +419,9 @@ class _ControlCard extends StatelessWidget {
 
   final bool isRunning;
   final int targetUpdatesPerSecond;
+  final int minimumUpdatesPerSecond;
+  final int maximumUpdatesPerSecond;
+  final int maximumTickBatch;
   final VoidCallback onStart;
   final VoidCallback onPause;
   final VoidCallback onReset;
@@ -445,19 +464,51 @@ class _ControlCard extends StatelessWidget {
             ),
             const SizedBox(height: 12),
             Text('Target input rate: $targetUpdatesPerSecond updates / second'),
+            const SizedBox(height: 8),
+            Text(
+              'Quick load levels',
+              style: Theme.of(context).textTheme.labelMedium,
+            ),
+            const SizedBox(height: 6),
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: <Widget>[
+                for (final preset in _ratePresets)
+                  ChoiceChip(
+                    label: Text(preset.label),
+                    selected: targetUpdatesPerSecond == preset.updatesPerSecond,
+                    onSelected: (_) =>
+                        onRateChanged(preset.updatesPerSecond.toDouble()),
+                  ),
+              ],
+            ),
             Slider(
-              min: 200,
-              max: 10000,
-              divisions: 49,
+              min: minimumUpdatesPerSecond.toDouble(),
+              max: maximumUpdatesPerSecond.toDouble(),
               value: targetUpdatesPerSecond.toDouble(),
               label: '$targetUpdatesPerSecond',
               onChanged: onRateChanged,
+            ),
+            Text(
+              'Range: $minimumUpdatesPerSecond to '
+              '$maximumUpdatesPerSecond updates / second. '
+              'Per-tick cap: $maximumTickBatch updates; excess input is '
+              'reported as simulation drops.',
+              style: Theme.of(context).textTheme.labelSmall,
             ),
           ],
         ),
       ),
     );
   }
+}
+
+class _RatePreset {
+  const _RatePreset(this.label, this.updatesPerSecond);
+
+  final String label;
+  final int updatesPerSecond;
 }
 
 class _ChartCard extends StatelessWidget {
