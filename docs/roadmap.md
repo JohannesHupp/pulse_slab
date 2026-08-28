@@ -1,6 +1,6 @@
 # Roadmap
 
-The initial release is an MVP focused on fixed-layout scalar records and honest delivery semantics. Potential future work includes:
+The current release focuses on fixed-layout scalar records and honest delivery semantics. Potential future work includes:
 
 - Layout code generation for static field descriptors and serializers.
 - A native shared-memory backend with explicit ownership and synchronization.
@@ -13,4 +13,3 @@ The initial release is an MVP focused on fixed-layout scalar records and honest 
 - Optional Riverpod and Bloc adapters in separate packages, not core dependencies.
 - Persistent journal adapters for acknowledged lossless domain events.
 - More detailed allocation and memory telemetry in benchmark tooling.
-

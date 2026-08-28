@@ -4,5 +4,4 @@ Repository-level changes are summarized here. The publishable package maintains 
 
 ## Unreleased
 
-- Established the `pulse_slab` repository and initial MVP documentation.
-
+- Established the `pulse_slab` repository and initial documentation.
