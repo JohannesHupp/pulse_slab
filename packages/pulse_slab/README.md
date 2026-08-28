@@ -82,7 +82,7 @@ store.release(sensor);
 store.dispose();
 ```
 
-Field descriptor names are metadata. Hot reads and writes use the stable descriptor and its resolved byte offset, not a string lookup. A layout permits at most 63 dirty-tracked fields in the MVP because it uses a non-negative signed integer field mask.
+Field descriptor names are metadata. Hot reads and writes use the stable descriptor and its resolved byte offset, not a string lookup. A layout permits at most 63 dirty-tracked fields because it uses a non-negative signed integer field mask.
 
 ## Delivery policies
 
@@ -153,7 +153,7 @@ Run the included smoke benchmark:
 dart run benchmark/pulse_slab_benchmark.dart
 ```
 
-## MVP limitations
+## Current limitations
 
 - Fixed record layouts are runtime descriptors; code generation is planned but not included.
 - A layout is limited to 63 independently dirty-tracked fields.
@@ -166,7 +166,7 @@ dart run benchmark/pulse_slab_benchmark.dart
 
 ## Pub.dev readiness
 
-The package includes pub.dev metadata, semantic versioning, license, changelog, example, tests, benchmarks, and analysis configuration. It is an MVP prepared for review and a dry run; it is not published by this repository.
+The package includes pub.dev metadata, semantic versioning, license, changelog, example, tests, benchmarks, and analysis configuration. It is prepared for review and a dry run; it is not published by this repository.
 
 ## Further reading
 

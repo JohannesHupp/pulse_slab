@@ -2,7 +2,7 @@ import 'dart:typed_data';
 
 import 'errors.dart';
 
-/// The largest number of fields supported by one [RecordLayout] in this MVP.
+/// The largest number of fields supported by one [RecordLayout].
 ///
 /// A layout uses one Dart [int] as its dirty-field mask. Reserving bit 63 keeps
 /// the representation portable and leaves every mask non-negative.
@@ -621,7 +621,7 @@ final class ByteView {
 
 /// Defines a compact, aligned record format for one family of store records.
 ///
-/// Field offsets are calculated once during construction. The MVP supports up
+/// Field offsets are calculated once during construction. The package supports up
 /// to [maxFieldsPerLayout] fields because one signed Dart [int] carries dirty
 /// field bits. A descriptor may be attached to only one layout.
 final class RecordLayout {
@@ -659,7 +659,7 @@ final class RecordLayout {
     if (selectedFields.length > maxFieldsPerLayout) {
       throw LayoutException(
         'Layout "$name" has ${selectedFields.length} fields; '
-        'the MVP limit is $maxFieldsPerLayout.',
+        'the current limit is $maxFieldsPerLayout.',
       );
     }
 

@@ -1,6 +1,6 @@
 # pulse_slab
 
-`pulse_slab` is a high-throughput reactive data-store MVP for Dart and Flutter. It keeps frequently changing scalar state in compact typed-memory segments, commits writes transactionally, and delivers only the field-level changes a consumer selected.
+`pulse_slab` is a high-throughput reactive data store for Dart and Flutter. It keeps frequently changing scalar state in compact typed-memory segments, commits writes transactionally, and delivers only the field-level changes a consumer selected.
 
 The publishable package lives in [`packages/pulse_slab`](packages/pulse_slab). This repository uses a small monorepo layout so the package, its Flutter example, benchmarks, and repository-level design notes can evolve together. The package itself is independently publishable.
 
@@ -48,4 +48,3 @@ dart pub publish --dry-run
 ```
 
 The commands and benchmark results are intentionally machine-specific; they are not performance claims.
-

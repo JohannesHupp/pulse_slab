@@ -2,7 +2,7 @@
 
 ## Ownership model
 
-The MVP uses isolate ownership rather than pretending ordinary Dart memory is shared. The main isolate owns the UI projection store, subscriptions, and Flutter scheduling. A long-lived worker isolate owns decoding or computation for a byte-batch workload and sends compact batches back to the main isolate.
+The package uses isolate ownership rather than pretending ordinary Dart memory is shared. The main isolate owns the UI projection store, subscriptions, and Flutter scheduling. A long-lived worker isolate owns decoding or computation for a byte-batch workload and sends compact batches back to the main isolate.
 
 ```mermaid
 flowchart LR
@@ -27,4 +27,4 @@ Worker startup returns a handle only after the worker port is ready. Worker exce
 
 ## FFI boundary
 
-The core MVP does not require native compilation. A future FFI backend must be isolated behind a memory abstraction and must document allocation ownership, lifetimes, synchronization, and isolate restrictions. A raw pointer is not an observable store and is not safely accessible from arbitrary isolates without an explicit native synchronization protocol.
+The core package does not require native compilation. A future FFI backend must be isolated behind a memory abstraction and must document allocation ownership, lifetimes, synchronization, and isolate restrictions. A raw pointer is not an observable store and is not safely accessible from arbitrary isolates without an explicit native synchronization protocol.

@@ -4,11 +4,11 @@
 
 A `RecordLayout` describes a fixed-size binary record. Typed field descriptors declare their name, scalar representation, byte width, alignment, and optional field-mask bit. The layout resolves offsets once at construction time, validates duplicate names and unsupported layouts, and exposes its final size and alignment.
 
-The MVP supports signed and unsigned 8-, 16-, 32-, and 64-bit integers, 32- and 64-bit floating point values, boolean/bit-flag fields, and fixed-size byte fields. Numeric access uses `dart:typed_data` views and `ByteData` with an explicit endianness. Bulk numeric storage never relies on `List<int>` or `List<double>`.
+The package supports signed and unsigned 8-, 16-, 32-, and 64-bit integers, 32- and 64-bit floating point values, boolean/bit-flag fields, and fixed-size byte fields. Numeric access uses `dart:typed_data` views and `ByteData` with an explicit endianness. Bulk numeric storage never relies on `List<int>` or `List<double>`.
 
 `Uint64Field` preserves all 64 stored bits. Dart VM `int` values are signed at this width, so a read whose top bit is set is represented as a two's-complement negative value (for example, all-one bits read as `-1`). Treat that field as a raw 64-bit bit pattern, or use a fixed byte field when application code needs portable unsigned arithmetic beyond the signed range. Record versions intentionally stop at the signed 64-bit maximum rather than wrapping, preserving their monotonic ordering.
 
-The dirty-mask representation supports at most 63 independently tracked fields in this MVP because it uses a positive signed 64-bit Dart integer mask. A layout may still contain fields that do not participate in a selected subscription only if the implementation explicitly documents their mask behavior; the default is to reject layouts beyond that limit.
+The dirty-mask representation supports at most 63 independently tracked fields because it uses a positive signed 64-bit Dart integer mask. A layout may still contain fields that do not participate in a selected subscription only if the implementation explicitly documents their mask behavior; the default is to reject layouts beyond that limit.
 
 ## Segments, slots, and handles
 

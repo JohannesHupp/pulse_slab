@@ -40,7 +40,7 @@ sequenceDiagram
   C->>S: read latest committed record
 ```
 
-A transaction creates no notification for an unchanged field. Multiple writes to one record merge into one dirty mask and one version increment during a single commit. Nested transactions are deliberately rejected in the MVP so commit boundaries remain predictable. While a transaction is active, public store reads, version reads, subscription registration, and flush calls reject access; a transaction writer is the only in-transaction reader. This prevents a synchronous consumer from observing partial writes.
+A transaction creates no notification for an unchanged field. Multiple writes to one record merge into one dirty mask and one version increment during a single commit. Nested transactions are deliberately rejected so commit boundaries remain predictable. While a transaction is active, public store reads, version reads, subscription registration, and flush calls reject access; a transaction writer is the only in-transaction reader. This prevents a synchronous consumer from observing partial writes.
 
 ## Module structure
 
