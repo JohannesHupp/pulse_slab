@@ -1,0 +1,25 @@
+name: pulse_slab
+description: Compact transactional typed-memory state storage for high-throughput reactive Dart and Flutter applications.
+version: 0.1.0
+repository: https://github.com/pulse-slab/pulse_slab
+issue_tracker: https://github.com/pulse-slab/pulse_slab/issues
+topics:
+  - reactive
+  - typed-data
+  - performance
+  - flutter
+  - telemetry
+
+environment:
+  sdk: '>=3.5.0 <4.0.0'
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+dev_dependencies:
+  flutter_lints: ^6.0.0
+  flutter_test:
+    sdk: flutter
+  test: ^1.25.15
+
