@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:collection';
 import 'dart:typed_data';
 
@@ -8,7 +9,8 @@ import '../segmented_memory.dart';
 import 'change_journal.dart';
 import 'delivery_policy.dart';
 
-const int _maximumRecordVersion = 0x7fffffffffffffff;
+// Keep versions exactly representable on both native and JavaScript targets.
+const int _maximumRecordVersion = 0x1fffffffffffff;
 
 /// A field-filtered notification for one already committed record update.
 ///
@@ -28,7 +30,7 @@ final class RecordChange {
   /// The record version after its transaction committed.
   final int version;
 
-  /// Union of the fields changed in the transaction.
+  /// Fields whose final encoded bytes differ from the pre-transaction state.
   final FieldMask fieldMask;
 
   @override
@@ -39,7 +41,21 @@ final class RecordChange {
 }
 
 /// Callback invoked by a [StoreSubscription].
+///
+/// Listener failures do not stop the current deterministic dispatch traversal.
+/// Pulse Slab invokes every remaining eligible listener, then rethrows the
+/// first failure with its original stack trace. A listener failure never rolls
+/// back an already committed transaction.
 typedef RecordChangeListener = void Function(RecordChange change);
+
+/// Callback invoked once when a live record subscription becomes unavailable.
+///
+/// This is called synchronously after the subscription has been made inactive
+/// because its record was released or its store was disposed. It is not called
+/// when application code manually disposes the subscription. Failures do not
+/// stop remaining invalidation callbacks; the first failure is rethrown after
+/// the lifecycle operation finishes.
+typedef StoreSubscriptionInvalidationListener = void Function();
 
 /// Owns one subscription to a record in a [PulseStore].
 ///
@@ -53,11 +69,14 @@ final class StoreSubscription {
     required this.fields,
     required this.policy,
     required RecordChangeListener listener,
+    StoreSubscriptionInvalidationListener? onInvalidated,
   })  : _store = store,
-        _listener = listener;
+        _listener = listener,
+        _onInvalidated = onInvalidated;
 
   final PulseStore _store;
   final RecordChangeListener _listener;
+  final StoreSubscriptionInvalidationListener? _onInvalidated;
 
   /// Handle this subscription observes.
   final RecordHandle handle;
@@ -121,6 +140,19 @@ final class StoreSubscription {
     _pendingFieldMask = 0;
     _pendingVersion = 0;
   }
+
+  _ListenerFailure? _invalidate() {
+    if (!_isActive) {
+      return null;
+    }
+    _markDisposed();
+    try {
+      _onInvalidated?.call();
+      return null;
+    } on Object catch (error, stackTrace) {
+      return _ListenerFailure(error, stackTrace);
+    }
+  }
 }
 
 /// A transaction-scoped facade used to obtain controlled writers.
@@ -172,7 +204,11 @@ final class TransactionRecordWriter {
   /// how many successful calls are made through this writer.
   bool set<T>(Field<T> field, T value) => _state._set(_pending, field, value);
 
-  /// Fields changed through this writer so far in the transaction.
+  /// Fields whose writes differed at least once during this transaction.
+  ///
+  /// The committed [RecordChange.fieldMask] is more precise: it contains only
+  /// fields whose final encoded bytes differ from their bytes before the
+  /// transaction began.
   FieldMask get changedMask {
     _state._ensureActive();
     return _pending.writer.changedMask;
@@ -185,18 +221,26 @@ final class TransactionRecordWriter {
 /// not expose raw addresses and it does not make ordinary Dart memory shared
 /// between isolates. Create one store for each independent ownership domain.
 final class PulseStore {
-  /// Creates a store with bounded journal and batched-delivery capacity.
+  /// Creates a store with bounded journal and delivery capacity.
+  ///
+  /// With [JournalOverflowPolicy.rejectNewest], a full journal omits new
+  /// journal entries but never rejects record-state commits. Observe
+  /// [rejectedJournalChangeCount] when that distinction matters.
   PulseStore({
     this.segmentCapacity = 1024,
     int journalCapacity = 4096,
     JournalOverflowPolicy journalOverflowPolicy =
         JournalOverflowPolicy.overwriteOldest,
     int maxBatchedDeliveries = 1024,
+    int maxReentrantImmediateDeliveries = 1024,
   })  : maxBatchedDeliveries = _positive(
           maxBatchedDeliveries,
           'maxBatchedDeliveries',
         ),
-        _memory = SegmentedMemory(segmentCapacity: segmentCapacity),
+        maxReentrantImmediateDeliveries = _positive(
+          maxReentrantImmediateDeliveries,
+          'maxReentrantImmediateDeliveries',
+        ),
         journal = ChangeJournal(
           capacity: journalCapacity,
           overflowPolicy: journalOverflowPolicy,
@@ -204,7 +248,19 @@ final class PulseStore {
         _batchedQueue = List<_BatchedDelivery?>.filled(
           _positive(maxBatchedDeliveries, 'maxBatchedDeliveries'),
           null,
-        );
+        ),
+        _reentrantImmediateQueue = List<_ImmediateDelivery?>.filled(
+          _positive(
+            maxReentrantImmediateDeliveries,
+            'maxReentrantImmediateDeliveries',
+          ),
+          null,
+        ) {
+    _memory = SegmentedMemory(
+      segmentCapacity: segmentCapacity,
+      readAccessGuard: _ensureRetainedReaderAccess,
+    );
+  }
 
   static int _positive(int value, String name) {
     if (value <= 0) {
@@ -219,14 +275,25 @@ final class PulseStore {
   /// Fixed maximum number of queued [DeliveryPolicy.batched] deliveries.
   final int maxBatchedDeliveries;
 
+  /// Fixed maximum number of reentrant immediate listener deliveries awaiting
+  /// traversal.
+  ///
+  /// The queue is used only while an immediate listener commits another state
+  /// change. When it fills, the oldest replaceable listener delivery is
+  /// overwritten and [droppedReentrantImmediateDeliveryCount] increases.
+  final int maxReentrantImmediateDeliveries;
+
   /// Ring journal for compact, replaceable record-state changes.
   final ChangeJournal journal;
 
-  final SegmentedMemory _memory;
+  late final SegmentedMemory _memory;
   final Map<RecordHandle, _SubscriptionBucket> _subscriptionBuckets =
       <RecordHandle, _SubscriptionBucket>{};
   final List<StoreSubscription> _latestQueue = <StoreSubscription>[];
   final List<_BatchedDelivery?> _batchedQueue;
+  final List<_ImmediateDelivery?> _reentrantImmediateQueue;
+  final _TransactionScratchArena _transactionScratch =
+      _TransactionScratchArena();
 
   _TransactionState? _activeTransaction;
   var _batchedReadIndex = 0;
@@ -237,8 +304,14 @@ final class PulseStore {
   var _deliveredNotificationCount = 0;
   var _latestCoalescedDeliveryCount = 0;
   var _droppedBatchedDeliveryCount = 0;
+  var _droppedReentrantImmediateDeliveryCount = 0;
+  var _rejectedJournalChangeCount = 0;
   var _isFlushingLatest = false;
   var _isFlushingBatched = false;
+  var _isPublishingCommittedChanges = false;
+  var _reentrantImmediateReadIndex = 0;
+  var _reentrantImmediateWriteIndex = 0;
+  var _reentrantImmediateLength = 0;
 
   /// Whether this store has been disposed.
   bool get isDisposed => _isDisposed;
@@ -266,6 +339,37 @@ final class PulseStore {
   /// delivery queue.
   int get droppedBatchedDeliveryCount => _droppedBatchedDeliveryCount;
 
+  /// Number of oldest replaceable listener deliveries overwritten from the
+  /// bounded reentrant immediate-delivery queue.
+  int get droppedReentrantImmediateDeliveryCount =>
+      _droppedReentrantImmediateDeliveryCount;
+
+  /// Number of reentrant immediate listener deliveries awaiting the active
+  /// traversal.
+  int get pendingReentrantImmediateDeliveryCount => _reentrantImmediateLength;
+
+  /// Number of committed changes not retained by a full rejecting journal.
+  ///
+  /// This increases only when [journal] uses
+  /// [JournalOverflowPolicy.rejectNewest]. The record state, its version, and
+  /// its matching subscription deliveries still commit successfully; the
+  /// bounded journal is a replaceable state observation channel, not a
+  /// transaction acceptance gate.
+  int get rejectedJournalChangeCount => _rejectedJournalChangeCount;
+
+  /// Retained capacity, in bytes, of the reusable transaction snapshot arena.
+  ///
+  /// The arena grows only when a transaction needs more rollback bytes than
+  /// it has previously retained. It is reset between transactions and released
+  /// when this store is disposed.
+  int get transactionScratchCapacityInBytes => _transactionScratch.capacity;
+
+  /// Greatest rollback-snapshot footprint observed for one transaction.
+  ///
+  /// This diagnostic is useful when sizing layouts and assessing transaction
+  /// fan-out. It is not a count of live record memory.
+  int get transactionScratchPeakBytes => _transactionScratch.peakBytes;
+
   /// Allocates a zero-initialized record with [layout].
   RecordHandle allocate(RecordLayout layout) {
     _ensureOpen();
@@ -290,13 +394,15 @@ final class PulseStore {
   /// Releases [handle] and disposes only subscriptions attached to it.
   ///
   /// A released handle cannot be read, written, watched, or released again.
-  /// Its slot can later be reused with a new generation.
+  /// Its slot can later be reused with a new generation. Calling this from a
+  /// change listener is safe: the current delivery traversal skips every
+  /// invalidated subscription that has not run yet.
   void release(RecordHandle handle) {
     _ensureOpen();
     _ensureNoActiveLifecycleMutation('release');
     _memory.release(handle);
     final _SubscriptionBucket? bucket = _subscriptionBuckets.remove(handle);
-    bucket?.disposeAll();
+    final _ListenerFailure? invalidationFailure = bucket?.invalidateAll();
     if (!_isFlushingLatest) {
       _latestQueue.removeWhere(
         (StoreSubscription subscription) => subscription.handle == handle,
@@ -305,6 +411,7 @@ final class PulseStore {
     if (!_isFlushingBatched) {
       _purgeInactiveBatched();
     }
+    invalidationFailure?.throwWithOriginalStack();
   }
 
   /// Runs [action] in one non-nestable transaction.
@@ -313,17 +420,39 @@ final class PulseStore {
   /// record advances one version, produces at most one journal entry, and is
   /// then delivered to matching subscriptions. If [action] throws, bytes
   /// changed through transaction writers are restored and no changes publish.
+  ///
+  /// A full [JournalOverflowPolicy.rejectNewest] journal does not reject the
+  /// state commit. Instead, the committed state is omitted from the journal and
+  /// [rejectedJournalChangeCount] increases. Listener failures happen after
+  /// commit: every eligible listener is attempted and the first failure is
+  /// rethrown after traversal.
+  ///
+  /// [action] must complete synchronously. Returning a [Future] is rejected
+  /// and rolls back its synchronous prefix. Any deferred code runs outside the
+  /// transaction boundary and must not use its transaction writer.
   R transaction<R>(R Function(WriteTransaction transaction) action) {
     _ensureOpen();
     if (_activeTransaction != null) {
       throw StateError('Nested PulseStore transactions are not supported.');
     }
 
+    _transactionScratch.reset();
     final _TransactionState state = _TransactionState(this);
     _activeTransaction = state;
     late R result;
     try {
       result = action(WriteTransaction._(state));
+      if (result is Future<Object?>) {
+        // The call throws synchronously, so this rejected future has no normal
+        // caller. Ignore a later writer-lifetime failure instead of surfacing
+        // it as an unrelated unhandled asynchronous error.
+        result.ignore();
+        throw ArgumentError.value(
+          action,
+          'action',
+          'PulseStore.transaction actions must complete synchronously.',
+        );
+      }
       state.prepareCommit();
     } on Object {
       state.rollback();
@@ -333,17 +462,23 @@ final class PulseStore {
       _activeTransaction = null;
     }
 
-    state.publish();
+    final _ListenerFailure? listenerFailure = state.publish();
+    listenerFailure?.throwWithOriginalStack();
     return result;
   }
 
-  /// Convenience wrapper for one controlled record update.
-  void update(
+  /// Convenience wrapper for one synchronous controlled record update.
+  ///
+  /// The return value of [action] is forwarded after the transaction commits.
+  /// If [action] returns a [Future], the transaction rejects it and rolls back
+  /// its synchronous prefix just as [transaction] does. [action] must not
+  /// retain its writer beyond the synchronous callback.
+  R update<R>(
     RecordHandle handle,
-    void Function(TransactionRecordWriter writer) action,
+    R Function(TransactionRecordWriter writer) action,
   ) {
-    transaction<void>((WriteTransaction transaction) {
-      action(transaction.write(handle));
+    return transaction<R>((WriteTransaction transaction) {
+      return action(transaction.write(handle));
     });
   }
 
@@ -353,10 +488,17 @@ final class PulseStore {
   /// fields. Subscription order is insertion order for a record. A listener
   /// added during notification starts with a later change; a listener disposed
   /// during notification is not called again in that traversal.
+  ///
+  /// [onInvalidated] is called once when [handle] is released or this store is
+  /// disposed. It is not called by [StoreSubscription.dispose]. This makes it
+  /// suitable for UI adapters that need to render an unavailable record state.
+  /// If it throws, all remaining invalidation callbacks still run before the
+  /// lifecycle operation rethrows the first failure.
   StoreSubscription watch(
     RecordHandle handle, {
     FieldMask fields = 0,
     DeliveryPolicy policy = DeliveryPolicy.immediate,
+    StoreSubscriptionInvalidationListener? onInvalidated,
     required RecordChangeListener listener,
   }) {
     _ensureOpen();
@@ -369,6 +511,7 @@ final class PulseStore {
       fields: fields,
       policy: policy,
       listener: listener,
+      onInvalidated: onInvalidated,
     );
     final _SubscriptionBucket bucket = _subscriptionBuckets.putIfAbsent(
       handle,
@@ -383,16 +526,31 @@ final class PulseStore {
   ///
   /// Call this from a render loop, a test, or another explicit scheduling
   /// boundary. Changes submitted while a listener runs wait for the next call.
+  /// Listener failures do not stop other eligible pending deliveries; the first
+  /// failure is rethrown after both queues have been traversed.
   int flush() {
     _ensureOpen();
     _ensureCommittedAccess('flush deliveries');
-    return _flushLatest() + _flushBatched();
+    if (_isFlushingLatest || _isFlushingBatched) {
+      throw StateError(
+        'PulseStore.flush cannot be called from a delivery callback.',
+      );
+    }
+    final _FlushResult latest = _flushLatest();
+    final _FlushResult batched = _isDisposed
+        ? const _FlushResult(delivered: 0, listenerFailure: null)
+        : _flushBatched();
+    (latest.listenerFailure ?? batched.listenerFailure)
+        ?.throwWithOriginalStack();
+    return latest.delivered + batched.delivered;
   }
 
   /// Disposes subscriptions, bounded queues, and typed-memory segments.
   ///
   /// Multiple calls are safe. Existing readers and writers fail safely after
-  /// disposal because their underlying memory owner is disposed.
+  /// disposal because their underlying memory owner is disposed. Calling this
+  /// from a change listener is safe: current and pending deliveries become
+  /// inactive and no later record changes are published.
   void dispose() {
     if (_isDisposed) {
       return;
@@ -401,18 +559,26 @@ final class PulseStore {
       throw StateError('A PulseStore cannot be disposed during a transaction.');
     }
     _isDisposed = true;
-    for (final _SubscriptionBucket bucket in _subscriptionBuckets.values) {
-      bucket.disposeAll();
+    _ListenerFailure? invalidationFailure;
+    final List<_SubscriptionBucket> buckets =
+        List<_SubscriptionBucket>.of(_subscriptionBuckets.values);
+    for (final _SubscriptionBucket bucket in buckets) {
+      final _ListenerFailure? bucketFailure = bucket.invalidateAll();
+      invalidationFailure ??= bucketFailure;
     }
     _subscriptionBuckets.clear();
-    _latestQueue.clear();
-    for (var index = 0; index < _batchedQueue.length; index++) {
-      _batchedQueue[index] = null;
+    if (!_isFlushingLatest) {
+      _latestQueue.clear();
     }
-    _batchedLength = 0;
-    _batchedReadIndex = 0;
-    _batchedWriteIndex = 0;
+    if (!_isFlushingBatched) {
+      _clearBatchedDeliveries();
+    }
+    if (!_isPublishingCommittedChanges) {
+      _clearReentrantImmediateDeliveries();
+    }
+    _transactionScratch.dispose();
     _memory.dispose();
+    invalidationFailure?.throwWithOriginalStack();
   }
 
   void _ensureOpen() {
@@ -438,14 +604,31 @@ final class PulseStore {
     }
   }
 
+  void _ensureRetainedReaderAccess() {
+    if (_activeTransaction != null) {
+      throw StateError(
+        'Cannot access a retained record reader while a PulseStore '
+        'transaction is active. Use TransactionRecordWriter for '
+        'in-transaction reads.',
+      );
+    }
+  }
+
   void _validateSelectedFields(RecordLayout layout, FieldMask fields) {
-    if (fields < 0) {
-      throw ArgumentError.value(fields, 'fields', 'Must not be negative.');
+    if (fields < 0 || fields > 0x7fffffff) {
+      throw ArgumentError.value(
+        fields,
+        'fields',
+        'Must be a non-negative portable field mask.',
+      );
     }
     if (fields == 0) {
       return;
     }
-    final int supportedMask = (1 << layout.fields.length) - 1;
+    var supportedMask = 0;
+    for (final Field<Object?> field in layout.fields) {
+      supportedMask |= field.mask;
+    }
     if ((fields & ~supportedMask) != 0) {
       throw ArgumentError.value(
         fields,
@@ -477,37 +660,149 @@ final class PulseStore {
     }
   }
 
-  void _publishChanges(List<RecordChange> changes) {
-    for (final RecordChange change in changes) {
-      final _SubscriptionBucket? bucket = _subscriptionBuckets[change.handle];
-      bucket?.dispatch(this, change);
+  _ListenerFailure? _publishChanges(List<RecordChange> changes) {
+    if (changes.isEmpty || _isDisposed) {
+      return null;
+    }
+    if (_isPublishingCommittedChanges) {
+      for (final RecordChange change in changes) {
+        final _SubscriptionBucket? bucket = _subscriptionBuckets[change.handle];
+        bucket?.routeReentrant(this, change);
+      }
+      return null;
+    }
+
+    _isPublishingCommittedChanges = true;
+    _ListenerFailure? listenerFailure;
+    try {
+      for (final RecordChange change in changes) {
+        if (_isDisposed) {
+          break;
+        }
+        final _SubscriptionBucket? bucket = _subscriptionBuckets[change.handle];
+        final _ListenerFailure? dispatchFailure =
+            bucket?.dispatch(this, change);
+        listenerFailure ??= dispatchFailure;
+      }
+      while (!_isDisposed) {
+        final _ImmediateDelivery? delivery = _dequeueReentrantImmediate();
+        if (delivery == null) {
+          break;
+        }
+        final _ListenerFailure? invocationFailure = _invoke(
+          delivery.subscription,
+          delivery.change,
+        );
+        listenerFailure ??= invocationFailure;
+      }
+    } finally {
+      _isPublishingCommittedChanges = false;
+      _clearReentrantImmediateDeliveries();
+    }
+    return listenerFailure;
+  }
+
+  void _enqueueReentrantImmediate(
+    StoreSubscription subscription,
+    RecordChange change,
+  ) {
+    final _ImmediateDelivery delivery =
+        _ImmediateDelivery(subscription, change);
+    if (_reentrantImmediateLength == _reentrantImmediateQueue.length) {
+      _reentrantImmediateQueue[_reentrantImmediateReadIndex] = delivery;
+      _reentrantImmediateReadIndex =
+          _nextReentrantImmediateIndex(_reentrantImmediateReadIndex);
+      _reentrantImmediateWriteIndex = _reentrantImmediateReadIndex;
+      _droppedReentrantImmediateDeliveryCount++;
+      return;
+    }
+    _reentrantImmediateQueue[_reentrantImmediateWriteIndex] = delivery;
+    _reentrantImmediateWriteIndex =
+        _nextReentrantImmediateIndex(_reentrantImmediateWriteIndex);
+    _reentrantImmediateLength++;
+  }
+
+  _ImmediateDelivery? _dequeueReentrantImmediate() {
+    if (_reentrantImmediateLength == 0) {
+      return null;
+    }
+    final int index = _reentrantImmediateReadIndex;
+    final _ImmediateDelivery? delivery = _reentrantImmediateQueue[index];
+    _reentrantImmediateQueue[index] = null;
+    _reentrantImmediateReadIndex = _nextReentrantImmediateIndex(index);
+    _reentrantImmediateLength--;
+    return delivery;
+  }
+
+  void _clearReentrantImmediateDeliveries() {
+    for (var index = 0; index < _reentrantImmediateQueue.length; index++) {
+      _reentrantImmediateQueue[index] = null;
+    }
+    _reentrantImmediateReadIndex = 0;
+    _reentrantImmediateWriteIndex = 0;
+    _reentrantImmediateLength = 0;
+  }
+
+  int _nextReentrantImmediateIndex(int index) =>
+      index + 1 == _reentrantImmediateQueue.length ? 0 : index + 1;
+
+  _ListenerFailure? _route(
+    StoreSubscription subscription,
+    RecordChange change,
+  ) {
+    if (!subscription._isActive) {
+      return null;
+    }
+    switch (subscription.policy) {
+      case DeliveryPolicy.immediate:
+        return _invoke(subscription, change);
+      case DeliveryPolicy.latest:
+      case DeliveryPolicy.batched:
+        _routeDeferred(subscription, change);
+        return null;
     }
   }
 
-  void _route(StoreSubscription subscription, RecordChange change) {
+  void _routeDeferred(
+    StoreSubscription subscription,
+    RecordChange change,
+  ) {
     if (!subscription._isActive) {
       return;
     }
     switch (subscription.policy) {
       case DeliveryPolicy.immediate:
-        _invoke(subscription, change);
+        throw StateError(
+          'Immediate subscriptions must be delivered through the immediate '
+          'delivery path.',
+        );
       case DeliveryPolicy.latest:
         if (subscription._mergeLatest(change)) {
           _latestQueue.add(subscription);
         } else {
           _latestCoalescedDeliveryCount++;
         }
+        return;
       case DeliveryPolicy.batched:
         _enqueueBatched(subscription, change);
+        return;
     }
   }
 
-  void _invoke(StoreSubscription subscription, RecordChange change) {
+  _ListenerFailure? _invoke(
+    StoreSubscription subscription,
+    RecordChange change,
+  ) {
     if (!subscription._isActive) {
-      return;
+      return null;
     }
     _deliveredNotificationCount++;
-    subscription._listener(change);
+    try {
+      subscription._listener(change);
+      return null;
+    } on Object catch (error, stackTrace) {
+      return _ListenerFailure(error, stackTrace);
+    }
   }
 
   void _enqueueBatched(StoreSubscription subscription, RecordChange change) {
@@ -524,10 +819,11 @@ final class PulseStore {
     _batchedLength++;
   }
 
-  int _flushLatest() {
+  _FlushResult _flushLatest() {
     final int count = _latestQueue.length;
     var delivered = 0;
     var processed = 0;
+    _ListenerFailure? listenerFailure;
     _isFlushingLatest = true;
     try {
       for (var index = 0; index < count; index++) {
@@ -535,25 +831,37 @@ final class PulseStore {
         processed++;
         final RecordChange? change = subscription._takeLatest();
         if (change != null) {
-          _invoke(subscription, change);
+          final _ListenerFailure? invocationFailure = _invoke(
+            subscription,
+            change,
+          );
+          listenerFailure ??= invocationFailure;
           delivered++;
         }
       }
     } finally {
       _isFlushingLatest = false;
-      if (processed != 0) {
-        _latestQueue.removeRange(0, processed);
+      if (_isDisposed) {
+        _latestQueue.clear();
+      } else {
+        if (processed != 0) {
+          _latestQueue.removeRange(0, processed);
+        }
+        _latestQueue.removeWhere(
+          (StoreSubscription subscription) => !subscription._isActive,
+        );
       }
-      _latestQueue.removeWhere(
-        (StoreSubscription subscription) => !subscription._isActive,
-      );
     }
-    return delivered;
+    return _FlushResult(
+      delivered: delivered,
+      listenerFailure: listenerFailure,
+    );
   }
 
-  int _flushBatched() {
+  _FlushResult _flushBatched() {
     final int count = _batchedLength;
     var delivered = 0;
+    _ListenerFailure? listenerFailure;
     _isFlushingBatched = true;
     try {
       for (var index = 0; index < count; index++) {
@@ -561,14 +869,34 @@ final class PulseStore {
         if (delivery == null || !delivery.subscription._isActive) {
           continue;
         }
-        _invoke(delivery.subscription, delivery.change);
+        final _ListenerFailure? invocationFailure = _invoke(
+          delivery.subscription,
+          delivery.change,
+        );
+        listenerFailure ??= invocationFailure;
         delivered++;
       }
     } finally {
       _isFlushingBatched = false;
-      _purgeInactiveBatched();
+      if (_isDisposed) {
+        _clearBatchedDeliveries();
+      } else {
+        _purgeInactiveBatched();
+      }
     }
-    return delivered;
+    return _FlushResult(
+      delivered: delivered,
+      listenerFailure: listenerFailure,
+    );
+  }
+
+  void _clearBatchedDeliveries() {
+    for (var index = 0; index < _batchedQueue.length; index++) {
+      _batchedQueue[index] = null;
+    }
+    _batchedLength = 0;
+    _batchedReadIndex = 0;
+    _batchedWriteIndex = 0;
   }
 
   void _purgeInactiveBatched() {
@@ -634,8 +962,15 @@ final class _TransactionState {
 
   bool _set<T>(_PendingWrite pending, Field<T> field, T value) {
     _ensureActive();
-    pending.snapshot ??= _store._memory.copyRecordBytes(pending.handle);
-    return pending.writer.set(field, value);
+    if (!pending.writer.wouldChange(field, value)) {
+      return false;
+    }
+    pending.snapshotOffset ??= _store._transactionScratch.capture(
+      _store._memory,
+      pending.handle,
+    );
+    pending.writer.setKnownChanged(field, value);
+    return true;
   }
 
   void prepareCommit() {
@@ -646,14 +981,16 @@ final class _TransactionState {
 
     final List<_PendingWrite> changed = <_PendingWrite>[];
     for (final _PendingWrite pending in _pending.values) {
-      if (pending.writer.changedMask == 0 || _matchesSnapshot(pending)) {
+      final FieldMask netChangedMask = _netChangedMask(pending);
+      if (netChangedMask == 0) {
         continue;
       }
       if (_store._memory.versionOf(pending.handle) == _maximumRecordVersion) {
         throw const VersionOverflowException(
-          'A record version reached the supported signed 64-bit limit.',
+          'A record version reached the portable exact-integer limit.',
         );
       }
+      pending.netChangedMask = netChangedMask;
       changed.add(pending);
     }
 
@@ -662,38 +999,41 @@ final class _TransactionState {
       final RecordChange change = RecordChange._(
         handle: pending.handle,
         version: version,
-        fieldMask: pending.writer.changedMask,
+        fieldMask: pending.netChangedMask,
       );
-      _store.journal.append(
+      final bool journalRetained = _store.journal.append(
         ChangeRecord(
           segment: pending.handle.segment,
           slot: pending.handle.slot,
           generation: pending.handle.generation,
           version: version,
-          fieldMask: pending.writer.changedMask,
+          fieldMask: pending.netChangedMask,
         ),
       );
+      if (!journalRetained) {
+        _store._rejectedJournalChangeCount++;
+      }
       _store._committedChangeCount++;
       _committedChanges.add(change);
     }
     _prepared = true;
   }
 
-  bool _matchesSnapshot(_PendingWrite pending) {
-    final Uint8List? snapshot = pending.snapshot;
-    if (snapshot == null) {
-      return false;
+  FieldMask _netChangedMask(_PendingWrite pending) {
+    final FieldMask changedMask = pending.writer.changedMask;
+    if (changedMask == 0) {
+      return 0;
     }
-    final Uint8List current = _store._memory.copyRecordBytes(pending.handle);
-    if (snapshot.length != current.length) {
-      return false;
+    final int? snapshotOffset = pending.snapshotOffset;
+    if (snapshotOffset == null) {
+      return 0;
     }
-    for (var index = 0; index < snapshot.length; index++) {
-      if (snapshot[index] != current[index]) {
-        return false;
-      }
-    }
-    return true;
+    return _store._memory.changedFieldMaskFromBuffer(
+      pending.handle,
+      _store._transactionScratch.bytes,
+      snapshotOffset,
+      changedMask,
+    );
   }
 
   void rollback() {
@@ -701,9 +1041,13 @@ final class _TransactionState {
       return;
     }
     for (final _PendingWrite pending in _pending.values) {
-      final Uint8List? snapshot = pending.snapshot;
-      if (snapshot != null) {
-        _store._memory.restoreRecordBytes(pending.handle, snapshot);
+      final int? snapshotOffset = pending.snapshotOffset;
+      if (snapshotOffset != null) {
+        _store._memory.restoreRecordBytesFromBuffer(
+          pending.handle,
+          _store._transactionScratch.bytes,
+          snapshotOffset,
+        );
       }
     }
   }
@@ -712,11 +1056,11 @@ final class _TransactionState {
     _isActive = false;
   }
 
-  void publish() {
+  _ListenerFailure? publish() {
     if (!_prepared) {
       throw StateError('Cannot publish a transaction before it commits.');
     }
-    _store._publishChanges(_committedChanges);
+    return _store._publishChanges(_committedChanges);
   }
 
   void _ensureActive() {
@@ -731,7 +1075,63 @@ final class _PendingWrite {
 
   final RecordHandle handle;
   final RecordWriter writer;
-  Uint8List? snapshot;
+  int? snapshotOffset;
+  var netChangedMask = 0;
+}
+
+/// Reuses rollback storage between synchronous transactions in one store.
+///
+/// Record images are addressed by offsets rather than per-record [Uint8List]
+/// instances. The arena is never exposed outside the transaction lifecycle, so
+/// it can grow by replacing its backing buffer without invalidating callers.
+final class _TransactionScratchArena {
+  Uint8List _bytes = Uint8List(0);
+  var _used = 0;
+  var _peakBytes = 0;
+
+  Uint8List get bytes => _bytes;
+
+  int get capacity => _bytes.length;
+
+  int get peakBytes => _peakBytes;
+
+  void reset() {
+    _used = 0;
+  }
+
+  int capture(SegmentedMemory memory, RecordHandle handle) {
+    final int byteLength = handle.layout.sizeInBytes;
+    final int offset = _used;
+    final int required = offset + byteLength;
+    _ensureCapacity(required);
+    memory.copyRecordBytesInto(handle, _bytes, offset);
+    _used = required;
+    if (_used > _peakBytes) {
+      _peakBytes = _used;
+    }
+    return offset;
+  }
+
+  void dispose() {
+    _bytes = Uint8List(0);
+    _used = 0;
+    _peakBytes = 0;
+  }
+
+  void _ensureCapacity(int required) {
+    if (required <= _bytes.length) {
+      return;
+    }
+    var newCapacity = _bytes.isEmpty ? 64 : _bytes.length;
+    while (newCapacity < required) {
+      newCapacity *= 2;
+    }
+    final Uint8List grown = Uint8List(newCapacity);
+    if (_used != 0) {
+      grown.setRange(0, _used, _bytes);
+    }
+    _bytes = grown;
+  }
 }
 
 final class _SubscriptionBucket {
@@ -751,14 +1151,48 @@ final class _SubscriptionBucket {
     }
   }
 
-  void dispatch(PulseStore store, RecordChange change) {
+  _ListenerFailure? dispatch(PulseStore store, RecordChange change) {
     final int boundary = _subscriptions.length;
+    _ListenerFailure? listenerFailure;
     _dispatchDepth++;
     try {
       for (var index = 0; index < boundary; index++) {
         final StoreSubscription subscription = _subscriptions[index];
         if (subscription._isActive && subscription._matches(change.fieldMask)) {
-          store._route(subscription, change);
+          final _ListenerFailure? dispatchFailure = store._route(
+            subscription,
+            change,
+          );
+          listenerFailure ??= dispatchFailure;
+        }
+      }
+    } finally {
+      _dispatchDepth--;
+      if (_dispatchDepth == 0) {
+        _subscriptions.removeWhere((StoreSubscription item) => !item._isActive);
+      }
+    }
+    return listenerFailure;
+  }
+
+  /// Routes deferred policies immediately, then queues only matching immediate
+  /// listeners for the traversal that is already in progress. Capturing the
+  /// subscription object here ensures a listener added after this commit does
+  /// not observe an older change.
+  void routeReentrant(PulseStore store, RecordChange change) {
+    final int boundary = _subscriptions.length;
+    _dispatchDepth++;
+    try {
+      for (var index = 0; index < boundary; index++) {
+        final StoreSubscription subscription = _subscriptions[index];
+        if (!subscription._isActive ||
+            !subscription._matches(change.fieldMask)) {
+          continue;
+        }
+        if (subscription.policy == DeliveryPolicy.immediate) {
+          store._enqueueReentrantImmediate(subscription, change);
+        } else {
+          store._routeDeferred(subscription, change);
         }
       }
     } finally {
@@ -769,11 +1203,18 @@ final class _SubscriptionBucket {
     }
   }
 
-  void disposeAll() {
-    for (final StoreSubscription subscription in _subscriptions) {
-      subscription._markDisposed();
+  _ListenerFailure? invalidateAll() {
+    final List<StoreSubscription> subscriptions =
+        List<StoreSubscription>.of(_subscriptions);
+    _ListenerFailure? invalidationFailure;
+    for (final StoreSubscription subscription in subscriptions) {
+      final _ListenerFailure? subscriptionFailure = subscription._invalidate();
+      invalidationFailure ??= subscriptionFailure;
     }
-    _subscriptions.clear();
+    if (_dispatchDepth == 0) {
+      _subscriptions.clear();
+    }
+    return invalidationFailure;
   }
 }
 
@@ -782,4 +1223,32 @@ final class _BatchedDelivery {
 
   final StoreSubscription subscription;
   final RecordChange change;
+}
+
+/// A bounded deferred call to an immediate subscription.
+final class _ImmediateDelivery {
+  const _ImmediateDelivery(this.subscription, this.change);
+
+  final StoreSubscription subscription;
+  final RecordChange change;
+}
+
+final class _ListenerFailure {
+  const _ListenerFailure(this.error, this.stackTrace);
+
+  final Object error;
+  final StackTrace stackTrace;
+
+  Never throwWithOriginalStack() =>
+      Error.throwWithStackTrace(error, stackTrace);
+}
+
+final class _FlushResult {
+  const _FlushResult({
+    required this.delivered,
+    required this.listenerFailure,
+  });
+
+  final int delivered;
+  final _ListenerFailure? listenerFailure;
 }

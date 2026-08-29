@@ -1,0 +1,11 @@
+name: pulse_slab_workspace
+description: Shared dependency resolution for the pulse_slab package family.
+publish_to: none
+
+environment:
+  sdk: '>=3.6.0 <4.0.0'
+
+workspace:
+  - packages/pulse_slab
+  - packages/pulse_slab_flutter
+  - packages/pulse_slab_flutter/example

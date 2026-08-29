@@ -5,7 +5,10 @@ import 'layout.dart';
 import 'record_handle.dart';
 
 const int _maximumUint32 = 0xffffffff;
-const int _maximumVersion = 0x7fffffffffffffff;
+const int _maximumTypedDataBytes = 0x7fffffff;
+const int _maximumSegmentSlots = _maximumTypedDataBytes ~/ 8;
+// Keep versions exactly representable on both native and JavaScript targets.
+const int _maximumVersion = 0x1fffffffffffff;
 
 /// Reusable, layout-homogeneous typed-memory segments for Pulse Slab records.
 ///
@@ -15,7 +18,14 @@ const int _maximumVersion = 0x7fffffffffffffff;
 /// transaction and journal layers without exposing raw memory addresses.
 final class SegmentedMemory {
   /// Creates segmented storage with [segmentCapacity] slots per segment.
-  SegmentedMemory({this.segmentCapacity = 1024}) {
+  ///
+  /// [readAccessGuard] is an internal coordination hook used by [PulseStore]
+  /// to prevent retained readers from observing bytes during an active write
+  /// transaction. Standalone memory users can omit it.
+  SegmentedMemory({
+    this.segmentCapacity = 1024,
+    void Function()? readAccessGuard,
+  }) : _readAccessGuard = readAccessGuard {
     if (segmentCapacity <= 0) {
       throw RangeError.value(
         segmentCapacity,
@@ -23,10 +33,20 @@ final class SegmentedMemory {
         'Segment capacity must be greater than zero.',
       );
     }
+    if (segmentCapacity > _maximumSegmentSlots) {
+      throw RangeError.value(
+        segmentCapacity,
+        'segmentCapacity',
+        'Exceeds the portable typed-data metadata capacity.',
+      );
+    }
   }
 
   /// The number of record slots allocated in each new segment.
   final int segmentCapacity;
+
+  final void Function()? _readAccessGuard;
+  final RecordHandleIssuer _handleIssuer = RecordHandleIssuer();
 
   final List<_MemorySegment> _segments = <_MemorySegment>[];
   final Map<RecordLayout, _LayoutSegments> _pools =
@@ -62,7 +82,7 @@ final class SegmentedMemory {
     );
     final int slot = segment.allocateSlot();
     _liveRecords += 1;
-    return RecordHandle.internal(
+    return _handleIssuer.issue(
       segment: segment.index,
       slot: slot,
       generation: segment.generations[slot],
@@ -96,6 +116,9 @@ final class SegmentedMemory {
     if (_isDisposed) {
       return false;
     }
+    if (!_handleIssuer.owns(handle)) {
+      return false;
+    }
     if (handle.segment < 0 || handle.segment >= _segments.length) {
       return false;
     }
@@ -118,7 +141,7 @@ final class SegmentedMemory {
   /// Returns the committed version of [handle].
   int versionOf(RecordHandle handle) {
     final _MemorySegment segment = _resolve(handle);
-    return segment.versions[handle.slot];
+    return segment.versions[handle.slot].toInt();
   }
 
   /// Advances and returns [handle]'s committed version.
@@ -128,14 +151,14 @@ final class SegmentedMemory {
   /// explicitly rather than letting a stale version appear current.
   int incrementVersion(RecordHandle handle) {
     final _MemorySegment segment = _resolve(handle);
-    final int current = segment.versions[handle.slot];
+    final int current = segment.versions[handle.slot].toInt();
     if (current == _maximumVersion) {
       throw const VersionOverflowException(
-        'A record version reached the supported signed 64-bit limit.',
+        'A record version reached the portable exact-integer limit.',
       );
     }
     final int next = current + 1;
-    segment.versions[handle.slot] = next;
+    segment.versions[handle.slot] = next.toDouble();
     return next;
   }
 
@@ -149,6 +172,28 @@ final class SegmentedMemory {
     final Uint8List copy = Uint8List(handle.layout.sizeInBytes);
     copy.setRange(0, copy.length, segment.bytes, start);
     return copy;
+  }
+
+  /// Copies one record's raw bytes into a caller-owned [destination] buffer.
+  ///
+  /// This avoids allocating a separate [Uint8List] when a transaction can
+  /// reuse an internal scratch arena. [destinationOffset] must leave enough
+  /// contiguous bytes for the complete record image.
+  void copyRecordBytesInto(
+    RecordHandle handle,
+    Uint8List destination,
+    int destinationOffset,
+  ) {
+    final _MemorySegment segment = _resolve(handle);
+    final int byteLength = handle.layout.sizeInBytes;
+    _validateSnapshotRange(destination, destinationOffset, byteLength);
+    final int sourceOffset = segment.recordOffset(handle.slot);
+    destination.setRange(
+      destinationOffset,
+      destinationOffset + byteLength,
+      segment.bytes,
+      sourceOffset,
+    );
   }
 
   /// Restores a transaction snapshot previously returned by [copyRecordBytes].
@@ -171,6 +216,104 @@ final class SegmentedMemory {
     );
   }
 
+  /// Restores a complete record image from a range of [source] bytes.
+  ///
+  /// This is the allocation-free counterpart to [restoreRecordBytes] used by
+  /// transaction rollback. Version ownership remains with the caller.
+  void restoreRecordBytesFromBuffer(
+    RecordHandle handle,
+    Uint8List source,
+    int sourceOffset,
+  ) {
+    final _MemorySegment segment = _resolve(handle);
+    final int byteLength = handle.layout.sizeInBytes;
+    _validateSnapshotRange(source, sourceOffset, byteLength);
+    final int destinationOffset = segment.recordOffset(handle.slot);
+    segment.bytes.setRange(
+      destinationOffset,
+      destinationOffset + byteLength,
+      source,
+      sourceOffset,
+    );
+  }
+
+  /// Returns the subset of [candidateMask] whose field bytes differ from
+  /// [snapshot].
+  ///
+  /// Transactions use this to derive an exact net dirty mask without making a
+  /// second full-record copy after writing. [snapshot] must be a record image
+  /// returned by [copyRecordBytes] for the same layout.
+  FieldMask changedFieldMask(
+    RecordHandle handle,
+    Uint8List snapshot,
+    FieldMask candidateMask,
+  ) {
+    if (snapshot.length != handle.layout.sizeInBytes) {
+      throw ArgumentError.value(
+        snapshot.length,
+        'snapshot',
+        'Snapshot length must equal ${handle.layout.sizeInBytes} bytes.',
+      );
+    }
+    return changedFieldMaskFromBuffer(handle, snapshot, 0, candidateMask);
+  }
+
+  /// Returns changed fields against a record image stored in [snapshotBuffer].
+  ///
+  /// [snapshotOffset] identifies the start of the complete pre-transaction
+  /// record image. This lets the transaction layer compare against a reusable
+  /// scratch arena instead of allocating one snapshot object per record.
+  FieldMask changedFieldMaskFromBuffer(
+    RecordHandle handle,
+    Uint8List snapshotBuffer,
+    int snapshotOffset,
+    FieldMask candidateMask,
+  ) {
+    final _MemorySegment segment = _resolve(handle);
+    _validateSnapshotRange(
+      snapshotBuffer,
+      snapshotOffset,
+      handle.layout.sizeInBytes,
+    );
+    if (candidateMask == 0) {
+      return 0;
+    }
+
+    final int recordOffset = segment.recordOffset(handle.slot);
+    var result = 0;
+    for (final Field<Object?> field in handle.layout.fields) {
+      if ((candidateMask & field.mask) == 0) {
+        continue;
+      }
+      final int fieldOffset = field.offset;
+      final int fieldEnd = fieldOffset + field.byteLength;
+      for (var index = fieldOffset; index < fieldEnd; index++) {
+        if (snapshotBuffer[snapshotOffset + index] !=
+            segment.bytes[recordOffset + index]) {
+          result |= field.mask;
+          break;
+        }
+      }
+    }
+    return result;
+  }
+
+  void _validateSnapshotRange(
+    Uint8List bytes,
+    int offset,
+    int byteLength,
+  ) {
+    if (offset < 0 ||
+        offset > bytes.length ||
+        byteLength > bytes.length - offset) {
+      throw RangeError.value(
+        offset,
+        'offset',
+        'The buffer does not contain $byteLength bytes at the requested offset.',
+      );
+    }
+  }
+
   /// Releases segment metadata owned by this memory instance.
   ///
   /// Existing readers and writers become invalid immediately. This operation
@@ -189,6 +332,11 @@ final class SegmentedMemory {
 
   _MemorySegment _resolve(RecordHandle handle) {
     _checkNotDisposed();
+    if (!_handleIssuer.owns(handle)) {
+      throw const StaleRecordHandleException(
+        'Record handle belongs to a different segmented-memory owner.',
+      );
+    }
     if (handle.segment < 0 || handle.segment >= _segments.length) {
       throw RecordBoundsException(
         'Segment ${handle.segment} is outside this store.',
@@ -219,10 +367,10 @@ final class SegmentedMemory {
     RecordLayout layout,
     _LayoutSegments pool,
   ) {
-    final int byteLength = layout.sizeInBytes * segmentCapacity;
-    if (byteLength <= 0) {
+    if (layout.sizeInBytes > _maximumTypedDataBytes ~/ segmentCapacity) {
       throw LayoutException(
-        'Layout "${layout.name}" cannot allocate a non-positive segment size.',
+        'Layout "${layout.name}" and segment capacity $segmentCapacity '
+        'exceed the portable typed-data byte limit.',
       );
     }
     final _MemorySegment segment = _MemorySegment(
@@ -243,6 +391,10 @@ final class SegmentedMemory {
       );
     }
   }
+
+  void _ensureReadAccess() {
+    _readAccessGuard?.call();
+  }
 }
 
 /// A checked, immutable view of the latest committed record memory.
@@ -261,10 +413,14 @@ class RecordReader {
   RecordLayout get layout => handle.layout;
 
   /// The current committed record version.
-  int get version => _memory.versionOf(handle);
+  int get version {
+    _memory._ensureReadAccess();
+    return _memory.versionOf(handle);
+  }
 
   /// Reads [field] from the current committed record state.
   T get<T>(Field<T> field) {
+    _memory._ensureReadAccess();
     final _MemorySegment segment = _memory._resolve(handle);
     field.requireOwner(layout);
     return field.read(
@@ -279,12 +435,16 @@ class RecordReader {
   /// The view checks the handle before every public access. Calling [get] for a
   /// [BytesField] instead returns a defensive [Uint8List] copy.
   ByteView bytesView(BytesField field) {
+    _memory._ensureReadAccess();
     final _MemorySegment segment = _memory._resolve(handle);
     field.requireOwner(layout);
     return field.view(
       segment.data,
       segment.recordOffset(handle.slot) + field.offset,
-      validate: () => _memory.validateHandle(handle),
+      validate: () {
+        _memory._ensureReadAccess();
+        _memory.validateHandle(handle);
+      },
     );
   }
 }
@@ -301,11 +461,40 @@ class RecordWriter extends RecordReader {
 
   FieldMask _changedMask = 0;
 
+  @override
+  int get version => _memory.versionOf(handle);
+
+  @override
+  T get<T>(Field<T> field) {
+    final _MemorySegment segment = _memory._resolve(handle);
+    field.requireOwner(layout);
+    return field.read(
+      segment.data,
+      segment.recordOffset(handle.slot) + field.offset,
+      layout.byteOrder,
+    );
+  }
+
   /// The union of field bits changed through this writer.
   FieldMask get changedMask => _changedMask;
 
   /// Whether at least one field changed through this writer.
   bool get hasChanges => _changedMask != 0;
+
+  /// Returns whether [value] would change [field] without writing it.
+  ///
+  /// Transaction code uses this preflight to avoid allocating a rollback image
+  /// for a no-op field write.
+  bool wouldChange<T>(Field<T> field, T value) {
+    final _MemorySegment segment = _memory._resolve(handle);
+    field.requireOwner(layout);
+    return field.wouldChange(
+      segment.data,
+      segment.recordOffset(handle.slot) + field.offset,
+      value,
+      layout.byteOrder,
+    );
+  }
 
   /// Writes [value] to [field] and returns whether its stored bytes changed.
   bool set<T>(Field<T> field, T value) {
@@ -321,6 +510,23 @@ class RecordWriter extends RecordReader {
       _changedMask |= field.mask;
     }
     return changed;
+  }
+
+  /// Writes [value] after [wouldChange] has already returned `true`.
+  ///
+  /// This avoids repeating an equality check in the transaction hot path. It
+  /// is an internal coordination primitive; callers must not use it without a
+  /// preceding successful [wouldChange] check for the same field and value.
+  void setKnownChanged<T>(Field<T> field, T value) {
+    final _MemorySegment segment = _memory._resolve(handle);
+    field.requireOwner(layout);
+    field.write(
+      segment.data,
+      segment.recordOffset(handle.slot) + field.offset,
+      value,
+      layout.byteOrder,
+    );
+    _changedMask |= field.mask;
   }
 
   /// Clears the locally accumulated dirty bits without changing record memory.
@@ -386,7 +592,7 @@ final class _MemorySegment {
     required this.pool,
   })  : bytes = Uint8List(layout.sizeInBytes * capacity),
         generations = Uint32List(capacity),
-        versions = Uint64List(capacity),
+        versions = Float64List(capacity),
         active = Uint8List(capacity),
         _freeSlots = Int32List(capacity);
 
@@ -396,7 +602,9 @@ final class _MemorySegment {
   final _LayoutSegments pool;
   final Uint8List bytes;
   final Uint32List generations;
-  final Uint64List versions;
+
+  /// Exact record versions through the portable 2^53 - 1 cap.
+  final Float64List versions;
   final Uint8List active;
   final Int32List _freeSlots;
   late final ByteData data = ByteData.sublistView(bytes);
@@ -423,14 +631,14 @@ final class _MemorySegment {
 
     final int start = recordOffset(slot);
     bytes.fillRange(start, start + layout.sizeInBytes, 0);
-    versions[slot] = 0;
+    versions[slot] = 0.0;
     active[slot] = 1;
     return slot;
   }
 
   void releaseSlot(int slot) {
     active[slot] = 0;
-    versions[slot] = 0;
+    versions[slot] = 0.0;
     final int start = recordOffset(slot);
     bytes.fillRange(start, start + layout.sizeInBytes, 0);
 

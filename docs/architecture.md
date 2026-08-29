@@ -1,23 +1,41 @@
 # Architecture
 
-`pulse_slab` separates a high-rate data plane from the lower-rate UI plane. The data plane processes every valid input update. The delivery layer is allowed to merge replaceable state changes before they reach a specific consumer.
+`pulse_slab` is organized as a data plane and an optional Flutter UI plane. The pure Dart core owns layouts, memory, transactions, record lifetime, journals, subscriptions, and byte-batch workers. The Flutter adapter observes committed core state and schedules UI-facing notifications; it does not own or mutate the store outside normal core transactions.
+
+## Package boundary
+
+```mermaid
+flowchart LR
+  DartApp[Dart application or service] --> CorePublic["package:pulse_slab/pulse_slab.dart"]
+  FlutterApp[Flutter application] --> FlutterPublic["package:pulse_slab_flutter/pulse_slab_flutter.dart"]
+  FlutterPublic --> CorePublic
+  CorePublic --> Core["Typed memory, layouts, store, journal, subscriptions, worker"]
+  FlutterPublic --> Adapter["Frame coalescer, listenables, record builders"]
+  Adapter --> Widgets[Field-filtered Flutter widgets]
+```
+
+The core package has no Flutter SDK dependency. A Flutter application can depend on `pulse_slab_flutter` alone because it re-exports the core public API. A non-Flutter application should depend directly on `pulse_slab` and avoid importing UI concepts.
+
+The repository uses a Pub workspace for development. It resolves the local
+versioned packages as one dependency graph; the published packages retain their
+normal hosted dependency boundary.
 
 ## Data plane and UI plane
 
 ```mermaid
 flowchart LR
   Input[Telemetry or application input] --> Decode[Decode and normalize]
-  Decode --> Write[Store transaction]
+  Decode --> Write[Core transaction]
   Write --> Memory[Typed-memory segments]
   Write --> Journal[Bounded change journal]
   Journal --> Policies[Delivery policies]
-  Policies --> Core[Core subscriptions]
-  Policies --> Frame[Flutter frame coalescer]
-  Frame --> Widgets[Field-filtered widgets]
-  Core --> Services[Non-UI consumers]
+  Policies --> CoreConsumers[Core subscriptions]
+  Policies --> FlutterAdapter[Flutter frame coalescer]
+  FlutterAdapter --> Widgets[Field-filtered widgets]
+  CoreConsumers --> Services[Non-UI consumers]
 ```
 
-The store owns record lifetime, version counters, typed segments, and subscriptions. Flutter adapters observe committed changes but do not own the store. This makes core tests independent of widget bindings wherever possible.
+The data plane processes valid inputs and keeps the latest committed record state. The delivery plane can merge replaceable state changes before they reach a consumer. This distinction prevents a high-rate source from forcing a UI rebuild for every intermediate value.
 
 ## Write, commit, and notification flow
 
@@ -25,45 +43,52 @@ The store owns record lifetime, version counters, typed segments, and subscripti
 sequenceDiagram
   participant P as Producer
   participant T as Transaction
-  participant S as Segmented store
+  participant S as Core store
   participant J as Change journal
   participant D as Delivery policy
   participant C as Consumer
 
   P->>T: set typed fields
-  T->>T: compare and merge dirty masks
+  T->>T: compare final bytes and merge dirty masks
   T->>S: commit changed records
-  S->>S: increment record version once
-  S->>J: append compact change record
-  J->>D: deliver or coalesce
-  D->>C: notify selected fields only
+  S->>S: increment each changed record version once
+  S->>J: append or account for compact change record
+  J->>D: deliver or coalesce selected fields
+  D->>C: notify after commit
   C->>S: read latest committed record
 ```
 
-A transaction creates no notification for an unchanged field. Multiple writes to one record merge into one dirty mask and one version increment during a single commit. Nested transactions are deliberately rejected so commit boundaries remain predictable. While a transaction is active, public store reads, version reads, subscription registration, and flush calls reject access; a transaction writer is the only in-transaction reader. This prevents a synchronous consumer from observing partial writes.
+A transaction produces at most one change record and one version increment for each affected record. A write that changes a field and restores it before commit produces no net state change, version increment, or notification. Nested transactions are rejected to preserve a clear commit boundary.
+
+While a transaction callback is active, public reads, version reads, subscription registration, and flush calls reject access. Retained readers and fixed-byte views reject access as well. A transaction writer is the only in-transaction reader. This prevents synchronous consumers from observing partially written record bytes before the commit boundary. Transaction and `update` actions must complete synchronously; a returned `Future` is rejected and the synchronous prefix is rolled back.
 
 ## Module structure
 
 ```mermaid
-flowchart TD
-  Public[pulse_slab.dart] --> Core[Core public API]
-  FlutterPublic[pulse_slab_flutter.dart] --> FlutterAdapter[Flutter adapter]
-  Core --> Layout[Layout and field descriptors]
-  Core --> Store[Segmented store]
-  Core --> Journal[Bounded change journal]
-  Core --> Subscription[Delivery and subscriptions]
-  Core --> Worker[Byte-batch worker]
-  FlutterAdapter --> Core
+flowchart TB
+  CorePublic["pulse_slab public library"] --> Layout[Layouts and typed fields]
+  CorePublic --> Memory[Segmented typed memory]
+  CorePublic --> Reactive[Transactions, journal, and subscriptions]
+  CorePublic --> Worker[Byte-batch worker]
+
+  FlutterPublic["pulse_slab_flutter public library"] --> FlutterAdapter[Flutter adapter]
+  FlutterPublic --> CorePublic
   FlutterAdapter --> Scheduler[Frame scheduler]
-  Example[Flutter telemetry example] --> FlutterPublic
+  FlutterAdapter --> Builder[ReactiveRecordBuilder]
+
+  Example[Telemetry example] --> FlutterPublic
 ```
 
-Implementation details live under `lib/src`. The primary library exports core data-plane types. The Flutter entry point is separate so applications that only need the core API do not import widget classes accidentally.
+Implementation details stay under each package's `lib/src` directory. The core public entry point exports only data-plane concepts. The Flutter public entry point exports the core API plus Flutter-specific adapters.
 
-## Design boundaries
+## Delivery and lifecycle boundaries
 
-- Record layouts are fixed after construction; a field descriptor is a stable typed token, not a string lookup in the hot path.
-- Each live record has one segment, slot, generation, and monotonically increasing version.
-- The journal is bounded and tracks replaceable state. It is not a guarantee of lossless domain-event delivery.
-- Notification traversal is scoped to a record's subscriptions, not a global listener scan.
-- Delivery callbacks observe an already committed store state. A callback may start a follow-up transaction: immediate delivery dispatches that follow-up synchronously, while latest and batched delivery retain it until a later flush. Defer feedback-loop writes when a flat callback sequence is required.
+- Record subscriptions are stored per handle, so dispatch does not scan a global listener collection.
+- Matching callbacks run in registration order after state has committed. Removing a subscription during dispatch is safe; inactive subscriptions are skipped.
+- Immediate listener calls created by a reentrant commit wait until the active traversal finishes. The fixed `maxReentrantImmediateDeliveries` ring retains synchronous state commits and replaces its oldest pending delivery when full, incrementing `droppedReentrantImmediateDeliveryCount`. Reentrant latest and batched subscriptions enter their own policy queues immediately.
+- A callback may release a record or dispose the store. Later callbacks only run while their target and store remain active.
+- Listener failures do not roll back an already committed transaction or stop other eligible callbacks in the same traversal. After the outermost dispatch, the first listener failure is rethrown with its original stack trace.
+- Record listeners and lifecycle invalidation callbacks are synchronous APIs. Their returned futures are not awaited or routed through listener failure handling.
+- `flush()` rejects a reentrant call from a latest or batched delivery callback, so each queue traversal remains deterministic.
+- The journal is bounded. With overwrite behavior, older replaceable journal entries may be discarded. With reject-newest behavior, the state commit still succeeds and `PulseStore.rejectedJournalChangeCount` reports rejected journal admission.
+- The journal is not a lossless event queue. A lossless event must use a separately acknowledged channel.

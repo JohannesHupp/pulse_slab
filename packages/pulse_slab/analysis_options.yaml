@@ -1,4 +1,4 @@
-include: package:flutter_lints/flutter.yaml
+include: package:lints/recommended.yaml
 
 analyzer:
   language:
@@ -11,4 +11,3 @@ linter:
     avoid_print: false
     prefer_single_quotes: true
     require_trailing_commas: true
-

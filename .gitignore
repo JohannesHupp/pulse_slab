@@ -3,8 +3,8 @@
 .pub/
 build/
 coverage/
+publish/
 pubspec.lock
 **/.flutter-plugins
 **/.flutter-plugins-dependencies
 **/.metadata
-
