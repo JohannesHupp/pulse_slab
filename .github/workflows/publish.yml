@@ -70,6 +70,66 @@ jobs:
         working-directory: ${{ runner.temp }}/pulse-slab-publish/packages/pulse_slab
         run: flutter pub publish --force
 
+  create_core_github_release:
+    name: Create pulse_slab GitHub release
+    needs: publish_core
+    if: needs.publish_core.result == 'success'
+    runs-on: ubuntu-latest
+    environment: pub-dev
+    permissions:
+      contents: write
+
+    steps:
+      - name: Create or reuse the GitHub release
+        uses: actions/github-script@v7
+        env:
+          PACKAGE_NAME: pulse_slab
+          PACKAGE_VERSION: ${{ github.ref_name }}
+        with:
+          github-token: ${{ github.token }}
+          script: |
+            const packageName = process.env.PACKAGE_NAME;
+            const tagName = process.env.PACKAGE_VERSION;
+            const version = tagName.replace(`${packageName}-v`, '');
+            const prerelease = version.includes('-');
+            const changelogUrl =
+              `https://github.com/${context.repo.owner}/${context.repo.repo}` +
+              `/blob/${tagName}/packages/${packageName}/CHANGELOG.md`;
+            const body =
+              `Published [\`${packageName}\`](https://pub.dev/packages/${packageName}/versions/${version}) ` +
+              `version \`${version}\` to pub.dev.\n\n` +
+              `See the [package changelog](${changelogUrl}).`;
+
+            try {
+              await github.rest.repos.getReleaseByTag({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                tag: tagName,
+              });
+              core.notice(`GitHub release for ${tagName} already exists.`);
+            } catch (error) {
+              if (error.status !== 404) {
+                throw error;
+              }
+
+              try {
+                await github.rest.repos.createRelease({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  tag_name: tagName,
+                  name: `${packageName} ${version}`,
+                  body,
+                  prerelease,
+                });
+                core.info(`Created GitHub release for ${tagName}.`);
+              } catch (createError) {
+                if (createError.status !== 422) {
+                  throw createError;
+                }
+                core.notice(`GitHub release for ${tagName} was created concurrently.`);
+              }
+            }
+
   publish_flutter:
     name: Publish pulse_slab_flutter
     if: startsWith(github.ref_name, 'pulse_slab_flutter-v')
@@ -148,3 +208,63 @@ jobs:
       - name: Publish pulse_slab_flutter
         working-directory: ${{ runner.temp }}/pulse-slab-publish/packages/pulse_slab_flutter
         run: flutter pub publish --force
+
+  create_flutter_github_release:
+    name: Create pulse_slab_flutter GitHub release
+    needs: publish_flutter
+    if: needs.publish_flutter.result == 'success'
+    runs-on: ubuntu-latest
+    environment: pub-dev
+    permissions:
+      contents: write
+
+    steps:
+      - name: Create or reuse the GitHub release
+        uses: actions/github-script@v7
+        env:
+          PACKAGE_NAME: pulse_slab_flutter
+          PACKAGE_VERSION: ${{ github.ref_name }}
+        with:
+          github-token: ${{ github.token }}
+          script: |
+            const packageName = process.env.PACKAGE_NAME;
+            const tagName = process.env.PACKAGE_VERSION;
+            const version = tagName.replace(`${packageName}-v`, '');
+            const prerelease = version.includes('-');
+            const changelogUrl =
+              `https://github.com/${context.repo.owner}/${context.repo.repo}` +
+              `/blob/${tagName}/packages/${packageName}/CHANGELOG.md`;
+            const body =
+              `Published [\`${packageName}\`](https://pub.dev/packages/${packageName}/versions/${version}) ` +
+              `version \`${version}\` to pub.dev.\n\n` +
+              `See the [package changelog](${changelogUrl}).`;
+
+            try {
+              await github.rest.repos.getReleaseByTag({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                tag: tagName,
+              });
+              core.notice(`GitHub release for ${tagName} already exists.`);
+            } catch (error) {
+              if (error.status !== 404) {
+                throw error;
+              }
+
+              try {
+                await github.rest.repos.createRelease({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  tag_name: tagName,
+                  name: `${packageName} ${version}`,
+                  body,
+                  prerelease,
+                });
+                core.info(`Created GitHub release for ${tagName}.`);
+              } catch (createError) {
+                if (createError.status !== 422) {
+                  throw createError;
+                }
+                core.notice(`GitHub release for ${tagName} was created concurrently.`);
+              }
+            }

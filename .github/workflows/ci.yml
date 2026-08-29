@@ -206,8 +206,16 @@ jobs:
       - name: Create missing version tags
         env:
           RELEASE_TAG_TOKEN: ${{ secrets.RELEASE_TAG_TOKEN }}
+          PREVIOUS_SHA: ${{ github.event.before }}
         run: |
           set -euo pipefail
+
+          if [[ "$PREVIOUS_SHA" != "0000000000000000000000000000000000000000" ]] && \
+            git diff --quiet "$PREVIOUS_SHA" "$GITHUB_SHA" -- \
+              packages/pulse_slab packages/pulse_slab_flutter; then
+            echo "::notice::No publishable package files changed; skipping package release tag creation."
+            exit 0
+          fi
 
           if [[ -z "${RELEASE_TAG_TOKEN:-}" ]]; then
             echo "::error::RELEASE_TAG_TOKEN is required to create tag-triggered pub.dev releases."

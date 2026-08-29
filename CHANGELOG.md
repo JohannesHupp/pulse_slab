@@ -5,6 +5,13 @@ Repository-level changes are summarized here. Each publishable package maintains
 - [`pulse_slab`](packages/pulse_slab/CHANGELOG.md)
 - [`pulse_slab_flutter`](packages/pulse_slab_flutter/CHANGELOG.md)
 
+## Unreleased
+
+- Create one package-specific GitHub Release after each successful tag-triggered
+  pub.dev publication, marking semantic prereleases as GitHub pre-releases.
+- Add an idempotent manual workflow for backfilling GitHub Releases for existing
+  package tags without calling pub.dev again.
+
 ## 0.2.0-beta.2
 
 - Prepare the first tag-triggered pub.dev publication after the manual
