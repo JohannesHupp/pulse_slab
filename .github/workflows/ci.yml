@@ -152,19 +152,31 @@ jobs:
         with:
           channel: stable
           cache: true
-      - name: Resolve workspace dependencies
-        run: flutter pub get
       - name: Build isolated publication snapshot
-        run: dart run tools/prepare_publish_packages.dart
+        run: dart tools/prepare_publish_packages.dart
       - name: Verify that publication snapshot contains no examples
         run: |
           test ! -d publish/packages/pulse_slab/example
           test ! -d publish/packages/pulse_slab_flutter/example
+      - name: Copy publication snapshot outside the Git checkout
+        env:
+          PUBLISH_WORKSPACE: ${{ runner.temp }}/pulse-slab-publish
+        run: |
+          set -euo pipefail
+          rm -rf "$PUBLISH_WORKSPACE"
+          mkdir -p "$PUBLISH_WORKSPACE"
+          cp -a publish/. "$PUBLISH_WORKSPACE/"
+          test -f "$PUBLISH_WORKSPACE/pubspec.yaml"
+          test ! -d "$PUBLISH_WORKSPACE/packages/pulse_slab/example"
+          test ! -d "$PUBLISH_WORKSPACE/packages/pulse_slab_flutter/example"
+      - name: Resolve isolated publication dependencies
+        working-directory: ${{ runner.temp }}/pulse-slab-publish
+        run: flutter pub get
       - name: Validate core publication archive
-        working-directory: packages/pulse_slab
+        working-directory: ${{ runner.temp }}/pulse-slab-publish/packages/pulse_slab
         run: flutter pub publish --dry-run
       - name: Validate Flutter publication archive
-        working-directory: packages/pulse_slab_flutter
+        working-directory: ${{ runner.temp }}/pulse-slab-publish/packages/pulse_slab_flutter
         run: flutter pub publish --dry-run
       - name: Upload publication snapshot
         uses: actions/upload-artifact@v4
@@ -217,6 +229,10 @@ jobs:
             fi
 
             tag="${package}-v${version}"
+            legacy_tag="$version"
+            if git ls-remote --exit-code --tags origin "refs/tags/${legacy_tag}" > /dev/null 2>&1; then
+              echo "::notice::Legacy repository tag ${legacy_tag} exists. It is preserved and is not used for package publishing; using ${tag}."
+            fi
             if git ls-remote --exit-code --tags origin "refs/tags/${tag}" > /dev/null 2>&1; then
               echo "Release tag ${tag} already exists."
             else

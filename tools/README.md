@@ -26,7 +26,7 @@ The root README contains the complete verification command set.
 Create an isolated workspace containing only the two publishable packages:
 
 ~~~powershell
-dart run tools/prepare_publish_packages.dart
+dart tools/prepare_publish_packages.dart
 ~~~
 
 The command replaces the repository-local `publish/` directory after checking
@@ -36,15 +36,35 @@ that it is a safe direct child of the repository. The staged workspace contains
 It is the reviewable publication artifact uploaded by CI; do not commit
 generated `publish/` output.
 
-Run publication dry runs from the source package directories instead. Pub
-validates Git ignore rules, so it can reject a package inside the generated,
-Git-ignored `publish/` directory. The source package `.pubignore` files exclude
-examples from the actual pub.dev archives too.
+CI copies this snapshot to the runner's temporary directory before resolving
+dependencies and running `flutter pub publish --dry-run`. The temporary copy
+has no Git checkout as an ancestor, which prevents Pub's Git-state validation
+from treating the generated, Git-ignored snapshot as source checkout content.
+Use the same pattern locally when validating the staged archive:
+
+~~~powershell
+$publishWorkspace = Join-Path $env:TEMP ('pulse-slab-publish-' + [guid]::NewGuid().ToString('N'))
+New-Item -ItemType Directory -Path $publishWorkspace | Out-Null
+Copy-Item -Path publish\* -Destination $publishWorkspace -Recurse -Force
+Push-Location $publishWorkspace
+flutter pub get
+Push-Location packages/pulse_slab
+flutter pub publish --dry-run
+Pop-Location
+Push-Location packages/pulse_slab_flutter
+flutter pub publish --dry-run
+Pop-Location
+Pop-Location
+Remove-Item -LiteralPath $publishWorkspace -Recurse -Force
+~~~
+
+The source package `.pubignore` files remain a second safeguard that excludes
+examples from actual pub.dev archives.
 
 Remove generated staging output with:
 
 ~~~powershell
-dart run tools/prepare_publish_packages.dart --clean
+dart tools/prepare_publish_packages.dart --clean
 ~~~
 
 ## Coverage summary

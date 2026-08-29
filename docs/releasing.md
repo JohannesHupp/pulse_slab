@@ -54,7 +54,7 @@ Run the following from the repository root to create the same review artifact
 locally:
 
 ~~~powershell
-dart run tools/prepare_publish_packages.dart
+dart tools/prepare_publish_packages.dart
 Push-Location publish
 dart pub get
 dart pub workspace list
@@ -73,16 +73,36 @@ publish/
 ~~~
 
 Every `example` directory is excluded. The snapshot is a reviewable,
-independently resolvable package workspace. It is not committed and is not the
-directory used by `dart pub publish`: because it is ignored by Git, Pub's
-archive validation can reject it. The publishing workflow validates and
-publishes the source package directories instead. Their `.pubignore` files
-exclude examples from the actual pub.dev archives as well.
+independently resolvable package workspace. It is not committed. CI copies it
+to the runner's temporary directory before resolving dependencies, validating
+the archives, or publishing. That detached copy has no Git checkout as an
+ancestor, so Pub validates the exact staged files without being affected by a
+working-tree status check. The source package `.pubignore` files remain a
+second safeguard that excludes examples from the actual pub.dev archives.
+
+For a local archive check, copy the generated snapshot outside the repository
+before running Pub:
+
+~~~powershell
+$publishWorkspace = Join-Path $env:TEMP ('pulse-slab-publish-' + [guid]::NewGuid().ToString('N'))
+New-Item -ItemType Directory -Path $publishWorkspace | Out-Null
+Copy-Item -Path publish\* -Destination $publishWorkspace -Recurse -Force
+Push-Location $publishWorkspace
+flutter pub get
+Push-Location packages/pulse_slab
+flutter pub publish --dry-run
+Pop-Location
+Push-Location packages/pulse_slab_flutter
+flutter pub publish --dry-run
+Pop-Location
+Pop-Location
+Remove-Item -LiteralPath $publishWorkspace -Recurse -Force
+~~~
 
 Remove local staging output with:
 
 ~~~powershell
-dart run tools/prepare_publish_packages.dart --clean
+dart tools/prepare_publish_packages.dart --clean
 ~~~
 
 ## Release rule
@@ -102,11 +122,30 @@ success is safe: existing tags are left unchanged and only missing tags are
 created. A merge to `main` with no new package version fails the release-tag
 job rather than silently creating a non-versioned release.
 
+The existing repository-wide `0.1.0-alpha` tag is a legacy tag. It is preserved
+unchanged, does not match either package publishing trigger, and does not count
+as `pulse_slab-v0.1.0-alpha` or `pulse_slab_flutter-v0.1.0-alpha`. The release
+job emits a notice when it encounters a legacy tag with the same version and
+continues with the package-specific tag namespace.
+
+## Version policy
+
+The current release candidate is `0.2.0-beta.1`. Pre-1.0 development releases
+use numbered semantic prerelease identifiers such as `0.2.0-beta.2`; numbering
+makes subsequent beta releases unambiguous and preserves normal Pub version
+ordering.
+
+The first stable public release is planned as `1.0.0`, without a `-beta`
+suffix. Once that version is released, it is immutable on pub.dev. Later
+prerelease work, if needed, must use a subsequent version rather than changing
+the `1.0.0` release.
+
 The Flutter adapter has a normal hosted dependency on `pulse_slab`. Before
 publishing an adapter tag, the workflow waits for the exact lower-bound core
-version in its `^x.y.z` dependency constraint to appear on pub.dev. This makes
-same-merge core and adapter releases reliable without pretending that pub.dev
-publication is instantly visible.
+version in its caret dependency constraint, including a semantic prerelease
+suffix when present, to appear on pub.dev. This makes same-merge core and
+adapter releases reliable without pretending that pub.dev publication is
+instantly visible.
 
 ## One-time maintainer setup
 
@@ -169,7 +208,7 @@ Pop-Location
 
 dart run tools/coverage_summary.dart --input pulse_slab=packages/pulse_slab/coverage/lcov.info --input pulse_slab_flutter=packages/pulse_slab_flutter/coverage/lcov.info --output coverage/summary.md
 
-dart run tools/prepare_publish_packages.dart
+dart tools/prepare_publish_packages.dart
 ~~~
 
 Never modify or reuse a version already published on pub.dev. Release a new

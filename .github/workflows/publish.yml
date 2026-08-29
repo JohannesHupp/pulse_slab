@@ -35,11 +35,27 @@ jobs:
       - name: Configure Dart publishing credentials
         uses: dart-lang/setup-dart@v1
 
-      - name: Resolve the workspace
+      - name: Build isolated publication snapshot
+        run: dart tools/prepare_publish_packages.dart
+
+      - name: Copy publication snapshot outside the Git checkout
+        env:
+          PUBLISH_WORKSPACE: ${{ runner.temp }}/pulse-slab-publish
+        run: |
+          set -euo pipefail
+          rm -rf "$PUBLISH_WORKSPACE"
+          mkdir -p "$PUBLISH_WORKSPACE"
+          cp -a publish/. "$PUBLISH_WORKSPACE/"
+          test -f "$PUBLISH_WORKSPACE/pubspec.yaml"
+          test ! -d "$PUBLISH_WORKSPACE/packages/pulse_slab/example"
+          test ! -d "$PUBLISH_WORKSPACE/packages/pulse_slab_flutter/example"
+
+      - name: Resolve the isolated workspace
+        working-directory: ${{ runner.temp }}/pulse-slab-publish
         run: flutter pub get
 
       - name: Verify the release tag version
-        working-directory: packages/pulse_slab
+        working-directory: ${{ runner.temp }}/pulse-slab-publish/packages/pulse_slab
         shell: bash
         run: |
           expected_version="${GITHUB_REF_NAME#pulse_slab-v}"
@@ -47,11 +63,11 @@ jobs:
           test "$actual_version" = "$expected_version"
 
       - name: Validate the publish archive
-        working-directory: packages/pulse_slab
+        working-directory: ${{ runner.temp }}/pulse-slab-publish/packages/pulse_slab
         run: flutter pub publish --dry-run
 
       - name: Publish pulse_slab
-        working-directory: packages/pulse_slab
+        working-directory: ${{ runner.temp }}/pulse-slab-publish/packages/pulse_slab
         run: flutter pub publish --force
 
   publish_flutter:
@@ -74,11 +90,27 @@ jobs:
       - name: Configure Dart publishing credentials
         uses: dart-lang/setup-dart@v1
 
-      - name: Resolve the workspace
+      - name: Build isolated publication snapshot
+        run: dart tools/prepare_publish_packages.dart
+
+      - name: Copy publication snapshot outside the Git checkout
+        env:
+          PUBLISH_WORKSPACE: ${{ runner.temp }}/pulse-slab-publish
+        run: |
+          set -euo pipefail
+          rm -rf "$PUBLISH_WORKSPACE"
+          mkdir -p "$PUBLISH_WORKSPACE"
+          cp -a publish/. "$PUBLISH_WORKSPACE/"
+          test -f "$PUBLISH_WORKSPACE/pubspec.yaml"
+          test ! -d "$PUBLISH_WORKSPACE/packages/pulse_slab/example"
+          test ! -d "$PUBLISH_WORKSPACE/packages/pulse_slab_flutter/example"
+
+      - name: Resolve the isolated workspace
+        working-directory: ${{ runner.temp }}/pulse-slab-publish
         run: flutter pub get
 
       - name: Verify the release tag version
-        working-directory: packages/pulse_slab_flutter
+        working-directory: ${{ runner.temp }}/pulse-slab-publish/packages/pulse_slab_flutter
         shell: bash
         run: |
           expected_version="${GITHUB_REF_NAME#pulse_slab_flutter-v}"
@@ -86,12 +118,12 @@ jobs:
           test "$actual_version" = "$expected_version"
 
       - name: Wait for the required core package release
-        working-directory: packages/pulse_slab_flutter
+        working-directory: ${{ runner.temp }}/pulse-slab-publish/packages/pulse_slab_flutter
         shell: bash
         run: |
           core_constraint="$(awk '$1 == "pulse_slab:" { print $2; exit }' pubspec.yaml)"
-          if [[ ! "$core_constraint" =~ ^\^([0-9]+\.[0-9]+\.[0-9]+)$ ]]; then
-            echo "pulse_slab must use an exact caret version before publishing the Flutter adapter."
+          if [[ ! "$core_constraint" =~ ^\^([0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?)$ ]]; then
+            echo "pulse_slab must use an exact caret version, optionally with a semantic prerelease suffix, before publishing the Flutter adapter."
             exit 1
           fi
 
@@ -110,9 +142,9 @@ jobs:
           exit 1
 
       - name: Validate the publish archive
-        working-directory: packages/pulse_slab_flutter
+        working-directory: ${{ runner.temp }}/pulse-slab-publish/packages/pulse_slab_flutter
         run: flutter pub publish --dry-run
 
       - name: Publish pulse_slab_flutter
-        working-directory: packages/pulse_slab_flutter
+        working-directory: ${{ runner.temp }}/pulse-slab-publish/packages/pulse_slab_flutter
         run: flutter pub publish --force

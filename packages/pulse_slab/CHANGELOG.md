@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.2.0
+## 0.2.0-beta.1
 
 - Split Flutter framework bindings into the separately publishable `pulse_slab_flutter` package.
 - Kept this package Flutter-free for Dart-only data-plane consumers.

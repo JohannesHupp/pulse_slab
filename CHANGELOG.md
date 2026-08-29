@@ -5,7 +5,7 @@ Repository-level changes are summarized here. Each publishable package maintains
 - [`pulse_slab`](packages/pulse_slab/CHANGELOG.md)
 - [`pulse_slab_flutter`](packages/pulse_slab_flutter/CHANGELOG.md)
 
-## 0.2.0
+## 0.2.0-beta.1
 
 - Split the Dart-only data plane from the Flutter UI adapter into independently publishable packages.
 - Documented the package boundary, isolate ownership model, transaction and delivery behavior, and release workflow.
