@@ -1,6 +1,6 @@
 # Roadmap
 
-Version 0.2.0-beta.1 establishes a pure Dart data plane, a separately publishable Flutter adapter, deterministic bounded delivery behavior, and release-oriented verification. Future work should remain driven by measured workloads and preserve the ownership and lifecycle guarantees documented in this repository.
+Version 0.2.0-beta.2 establishes a pure Dart data plane, a separately publishable Flutter adapter, deterministic bounded delivery behavior, and release-oriented verification. Future work should remain driven by measured workloads and preserve the ownership and lifecycle guarantees documented in this repository.
 
 Potential future work includes:
 

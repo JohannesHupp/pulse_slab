@@ -130,7 +130,9 @@ continues with the package-specific tag namespace.
 
 ## Version policy
 
-The current release candidate is `0.2.0-beta.1`. Pre-1.0 development releases
+The current release candidate is `0.2.0-beta.2`. The initial
+`0.2.0-beta.1` releases were published manually to create the pub.dev package
+records required before trusted publishing can be enabled. Pre-1.0 development releases
 use numbered semantic prerelease identifiers such as `0.2.0-beta.2`; numbering
 makes subsequent beta releases unambiguous and preserves normal Pub version
 ordering.

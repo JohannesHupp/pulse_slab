@@ -2,7 +2,7 @@
 
 `pulse_slab` is a high-throughput reactive data plane for fixed-layout scalar state. It processes frequent writes in compact typed-memory segments, commits logical updates transactionally, and delivers only the field-level state changes that each consumer selected.
 
-Version 0.2.0-beta.1 separates the repository into two independently publishable packages:
+Version 0.2.0-beta.2 separates the repository into two independently publishable packages:
 
 | Package | Purpose | Runtime dependency |
 | --- | --- | --- |

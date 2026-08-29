@@ -8,11 +8,11 @@ widgets receive only relevant, committed record changes at a chosen UI cadence.
 
 ## Installation
 
-Once published, add the adapter to a Flutter application:
+Add the adapter to a Flutter application:
 
 ~~~yaml
 dependencies:
-  pulse_slab_flutter: ^0.2.0-beta.1
+  pulse_slab_flutter: ^0.2.0-beta.2
 ~~~
 
 The adapter depends on pulse_slab and re-exports its public Dart API. Import one
@@ -23,7 +23,7 @@ import 'package:pulse_slab_flutter/pulse_slab_flutter.dart';
 ~~~
 
 For local development in this repository, run `dart pub get` from the
-repository root. Its Pub workspace resolves the adjacent 0.2.0-beta.1 core package
+repository root. Its Pub workspace resolves the adjacent 0.2.0-beta.2 core package
 without an override file. The repository release automation publishes
 `pulse_slab` before this adapter and waits until the required core version is
 available from pub.dev.
