@@ -1,5 +1,10 @@
 import 'dart:typed_data';
 
+const int _maximumUint32 = 0xffffffff;
+const int _maximumJournalCapacity = 0x7fffffff ~/ 8;
+const int _maximumPortableVersion = 0x1fffffffffffff;
+const int _maximumPortableFieldMask = 0x7fffffff;
+
 /// A compact description of one committed record-state change.
 ///
 /// A change journal contains replaceable state updates, not lossless domain
@@ -7,13 +12,33 @@ import 'dart:typed_data';
 /// separate protocol with explicit producer backpressure.
 final class ChangeRecord {
   /// Creates a committed change description.
-  const ChangeRecord({
+  ChangeRecord({
     required this.segment,
     required this.slot,
     required this.generation,
     required this.version,
     required this.fieldMask,
-  });
+  }) {
+    _validateUint32(segment, 'segment');
+    _validateUint32(slot, 'slot');
+    _validateUint32(generation, 'generation');
+    if (version < 0 || version > _maximumPortableVersion) {
+      throw RangeError.value(
+        version,
+        'version',
+        'Must be a portable exact integer from zero through '
+            '$_maximumPortableVersion.',
+      );
+    }
+    if (fieldMask < 0 || fieldMask > _maximumPortableFieldMask) {
+      throw RangeError.value(
+        fieldMask,
+        'fieldMask',
+        'Must be a non-negative portable field mask through '
+            '$_maximumPortableFieldMask.',
+      );
+    }
+  }
 
   /// Globally unique segment identifier within the owning store.
   final int segment;
@@ -36,6 +61,11 @@ final class ChangeRecord {
         slot != newer.slot ||
         generation != newer.generation) {
       throw ArgumentError('Only changes for the same record can be merged.');
+    }
+    if (newer.version < version) {
+      throw ArgumentError(
+        'The newer change must not have a lower record version.',
+      );
     }
     return ChangeRecord(
       segment: segment,
@@ -77,8 +107,8 @@ final class ChangeJournal {
   })  : _segments = Uint32List(_validateCapacity(capacity)),
         _slots = Uint32List(capacity),
         _generations = Uint32List(capacity),
-        _versions = Uint64List(capacity),
-        _fieldMasks = Uint64List(capacity);
+        _versions = Float64List(capacity),
+        _fieldMasks = Uint32List(capacity);
 
   static int _validateCapacity(int capacity) {
     if (capacity <= 0) {
@@ -86,6 +116,13 @@ final class ChangeJournal {
         capacity,
         'capacity',
         'Must be greater than zero.',
+      );
+    }
+    if (capacity > _maximumJournalCapacity) {
+      throw RangeError.value(
+        capacity,
+        'capacity',
+        'Exceeds the portable typed-data column capacity.',
       );
     }
     return capacity;
@@ -100,8 +137,10 @@ final class ChangeJournal {
   final Uint32List _segments;
   final Uint32List _slots;
   final Uint32List _generations;
-  final Uint64List _versions;
-  final Uint64List _fieldMasks;
+
+  /// Versions remain exact because [ChangeRecord] caps them below 2^53.
+  final Float64List _versions;
+  final Uint32List _fieldMasks;
 
   var _readIndex = 0;
   var _writeIndex = 0;
@@ -147,7 +186,7 @@ final class ChangeJournal {
     _segments[_writeIndex] = change.segment;
     _slots[_writeIndex] = change.slot;
     _generations[_writeIndex] = change.generation;
-    _versions[_writeIndex] = change.version;
+    _versions[_writeIndex] = change.version.toDouble();
     _fieldMasks[_writeIndex] = change.fieldMask;
     _writeIndex = _next(_writeIndex);
     return true;
@@ -163,7 +202,7 @@ final class ChangeJournal {
       segment: _segments[index],
       slot: _slots[index],
       generation: _generations[index],
-      version: _versions[index],
+      version: _versions[index].toInt(),
       fieldMask: _fieldMasks[index],
     );
     _readIndex = _next(index);
@@ -191,4 +230,14 @@ final class ChangeJournal {
   }
 
   int _next(int index) => index + 1 == capacity ? 0 : index + 1;
+}
+
+void _validateUint32(int value, String name) {
+  if (value < 0 || value > _maximumUint32) {
+    throw RangeError.value(
+      value,
+      name,
+      'Must be an unsigned 32-bit integer.',
+    );
+  }
 }

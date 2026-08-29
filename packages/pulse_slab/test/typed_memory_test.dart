@@ -2,6 +2,7 @@ import 'dart:typed_data';
 
 import 'package:pulse_slab/src/errors.dart';
 import 'package:pulse_slab/src/layout.dart';
+import 'package:pulse_slab/src/record_handle.dart';
 import 'package:pulse_slab/src/segmented_memory.dart';
 import 'package:test/test.dart';
 
@@ -73,6 +74,38 @@ void main() {
         throwsA(isA<LayoutException>()),
       );
     });
+
+    test('uses a non-negative portable mask for the maximum field count', () {
+      final List<Field<Object?>> fields = List<Field<Object?>>.generate(
+        maxFieldsPerLayout,
+        (int index) => Uint8Field('field$index'),
+      );
+      final RecordLayout layout = RecordLayout(
+        name: 'PortableMaskLimit',
+        fields: fields,
+      );
+
+      expect(fields.last.mask, 0x40000000);
+      expect(layout.maskFor(fields), 0x7fffffff);
+    });
+
+    test('rejects alignment and offsets outside the portable byte range', () {
+      expect(
+        () => Uint8Field('tooAligned', alignment: 0x80000000),
+        throwsArgumentError,
+      );
+      expect(
+        () => Uint8Field('tooFar', byteOffset: 0x7fffffff),
+        throwsRangeError,
+      );
+    });
+
+    test('rejects a segment capacity beyond portable typed-data metadata', () {
+      expect(
+        () => SegmentedMemory(segmentCapacity: 0x10000000),
+        throwsRangeError,
+      );
+    });
   });
 
   group('typed record access', () {
@@ -116,7 +149,7 @@ void main() {
       expect(writer.set(uint16, 65535), isTrue);
       expect(writer.set(int32, -2147483648), isTrue);
       expect(writer.set(uint32, 4294967295), isTrue);
-      expect(writer.set(int64, -9223372036854775808), isTrue);
+      expect(writer.set(int64, -1234567890123), isTrue);
       expect(writer.set(uint64, -1), isTrue);
       expect(writer.set(float32, 42.5), isTrue);
       expect(writer.set(float64, -1234.25), isTrue);
@@ -133,7 +166,7 @@ void main() {
       expect(reader.get(uint16), 65535);
       expect(reader.get(int32), -2147483648);
       expect(reader.get(uint32), 4294967295);
-      expect(reader.get(int64), -9223372036854775808);
+      expect(reader.get(int64), -1234567890123);
       expect(reader.get(uint64), -1);
       expect(reader.get(float32), 42.5);
       expect(reader.get(float64), -1234.25);
@@ -178,6 +211,58 @@ void main() {
       expect(memory.copyRecordBytes(handle).sublist(0, 2), <int>[0x34, 0x12]);
       expect(writer.set(value, 0x1234), isFalse);
       expect(() => writer.set(value, 0x10000), throwsRangeError);
+    });
+
+    test('encodes signed 64-bit values with configured byte order', () {
+      final Int64Field bigEndianValue = Int64Field('bigEndianValue');
+      final RecordLayout bigEndianLayout = RecordLayout(
+        name: 'BigEndianInt64',
+        fields: <Field<Object?>>[bigEndianValue],
+        byteOrder: Endian.big,
+      );
+      final SegmentedMemory bigEndianMemory = SegmentedMemory();
+      final RecordHandle bigEndianHandle =
+          bigEndianMemory.allocate(bigEndianLayout);
+      bigEndianMemory.writer(bigEndianHandle).set(bigEndianValue, -2);
+
+      expect(
+        bigEndianMemory.copyRecordBytes(bigEndianHandle),
+        orderedEquals(<int>[0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xfe]),
+      );
+      expect(bigEndianMemory.read(bigEndianHandle).get(bigEndianValue), -2);
+
+      final Int64Field littleEndianValue = Int64Field('littleEndianValue');
+      final RecordLayout littleEndianLayout = RecordLayout(
+        name: 'LittleEndianInt64',
+        fields: <Field<Object?>>[littleEndianValue],
+        byteOrder: Endian.little,
+      );
+      final SegmentedMemory littleEndianMemory = SegmentedMemory();
+      final RecordHandle littleEndianHandle =
+          littleEndianMemory.allocate(littleEndianLayout);
+      littleEndianMemory.writer(littleEndianHandle).set(littleEndianValue, -2);
+
+      expect(
+        littleEndianMemory.copyRecordBytes(littleEndianHandle),
+        orderedEquals(<int>[0xfe, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff]),
+      );
+      expect(
+        littleEndianMemory.read(littleEndianHandle).get(littleEndianValue),
+        -2,
+      );
+    });
+
+    test('tracks adjacent float64 values as distinct writes', () {
+      final Float64Field value = Float64Field('value');
+      final RecordLayout layout = RecordLayout(
+        name: 'Float64BitComparison',
+        fields: <Field<Object?>>[value],
+      );
+      final SegmentedMemory memory = SegmentedMemory();
+      final RecordWriter writer = memory.writer(memory.allocate(layout));
+
+      expect(writer.set(value, 1.0), isTrue);
+      expect(writer.set(value, 1.0000000000000002), isTrue);
     });
 
     test('keeps readers read-only and rejects fields from another layout', () {
@@ -238,6 +323,34 @@ void main() {
       );
       expect(memory.isLive(second), isFalse);
       expect(memory.isLive(reused), isTrue);
+    });
+
+    test('rejects a numerically identical handle from another memory owner',
+        () {
+      final Uint8Field value = Uint8Field('value');
+      final RecordLayout layout = RecordLayout(
+        name: 'OwnerIdentity',
+        fields: <Field<Object?>>[value],
+      );
+      final SegmentedMemory firstMemory = SegmentedMemory();
+      final SegmentedMemory secondMemory = SegmentedMemory();
+      final RecordHandle firstHandle = firstMemory.allocate(layout);
+      final RecordHandle secondHandle = secondMemory.allocate(layout);
+
+      expect(firstHandle.segment, secondHandle.segment);
+      expect(firstHandle.slot, secondHandle.slot);
+      expect(firstHandle.generation, secondHandle.generation);
+      expect(firstHandle, isNot(equals(secondHandle)));
+      expect(firstMemory.isLive(secondHandle), isFalse);
+      expect(
+        () => firstMemory.read(secondHandle),
+        throwsA(isA<StaleRecordHandleException>()),
+      );
+      expect(
+        () => firstMemory.release(secondHandle),
+        throwsA(isA<StaleRecordHandleException>()),
+      );
+      expect(firstMemory.isLive(firstHandle), isTrue);
     });
 
     test('tracks versions and restores explicit transaction snapshots', () {

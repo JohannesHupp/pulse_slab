@@ -1,30 +1,34 @@
 # Memory model
 
+The pure Dart core stores fixed-layout scalar records in typed-memory segments. It does not expose raw addresses as its ordinary API and does not rely on Flutter or native compilation.
+
 ## Layouts and fields
 
-A `RecordLayout` describes a fixed-size binary record. Typed field descriptors declare their name, scalar representation, byte width, alignment, and optional field-mask bit. The layout resolves offsets once at construction time, validates duplicate names and unsupported layouts, and exposes its final size and alignment.
+A `RecordLayout` describes a fixed-size binary record. Typed field descriptors declare their name, scalar representation, byte width, alignment, and field-mask bit. The layout resolves offsets once at construction time, validates duplicate names and unsupported layouts, and exposes its final size and alignment.
 
-The package supports signed and unsigned 8-, 16-, 32-, and 64-bit integers, 32- and 64-bit floating point values, boolean/bit-flag fields, and fixed-size byte fields. Numeric access uses `dart:typed_data` views and `ByteData` with an explicit endianness. Bulk numeric storage never relies on `List<int>` or `List<double>`.
+The core supports signed and unsigned 8-, 16-, 32-, and 64-bit integers, 32- and 64-bit floating-point values, boolean or bit-flag fields, and fixed-size byte fields. Numeric access uses `dart:typed_data` views and `ByteData` with explicit endianness. Bulk numeric storage does not rely on `List<int>` or `List<double>`.
 
-`Uint64Field` preserves all 64 stored bits. Dart VM `int` values are signed at this width, so a read whose top bit is set is represented as a two's-complement negative value (for example, all-one bits read as `-1`). Treat that field as a raw 64-bit bit pattern, or use a fixed byte field when application code needs portable unsigned arithmetic beyond the signed range. Record versions intentionally stop at the signed 64-bit maximum rather than wrapping, preserving their monotonic ordering.
+`Int64Field` and `Uint64Field` are encoded as two 32-bit words, avoiding unsupported 64-bit `ByteData` accessors on Dart JavaScript targets. Dart VM `int` values are signed at this width, so a `Uint64Field` read whose top bit is set is represented as a two's-complement negative value. Treat it as a raw 64-bit bit pattern, or use a fixed byte field when application code needs portable unsigned arithmetic beyond the signed range. JavaScript targets cannot represent every 64-bit `int` exactly, so a fixed byte field is the portable choice for full-width identifiers or counters in Flutter web. Record versions stop at the portable exact-integer maximum (`2^53 - 1`) rather than wrapping, preserving monotonic ordering on native and web targets.
 
-The dirty-mask representation supports at most 63 independently tracked fields because it uses a positive signed 64-bit Dart integer mask. A layout may still contain fields that do not participate in a selected subscription only if the implementation explicitly documents their mask behavior; the default is to reject layouts beyond that limit.
+Record offsets, record sizes, and segment byte allocations are bounded to the positive 32-bit typed-data range (`2^31 - 1` bytes). The store rejects a layout or segment configuration that exceeds that range before it attempts the allocation.
+
+The dirty-mask representation supports at most 31 independently tracked fields. Dart JavaScript targets apply 32-bit bitwise semantics, so the sign bit stays unused and every field mask remains non-negative and portable across native and web targets.
 
 ## Segments, slots, and handles
 
 ```mermaid
 flowchart LR
-  H[Record handle] --> S[Segment index]
-  H --> L[Slot index]
-  H --> G[Generation]
-  S --> B[Typed byte buffer]
-  L --> O[Layout byte offset]
-  G --> V[Slot generation table]
+  Handle[Record handle] --> Segment[Segment index]
+  Handle --> Slot[Slot index]
+  Handle --> Generation[Generation]
+  Segment --> Buffer[Typed byte buffer]
+  Slot --> Offset[Layout byte offset]
+  Generation --> Table[Slot generation table]
 ```
 
-Records are allocated into fixed-capacity segments. A segment owns one byte buffer and metadata arrays for its slots. When capacity is exhausted, the store adds a new segment instead of relocating live records. This preserves handle stability for existing records.
+Records are allocated into fixed-capacity segments. A segment owns one byte buffer and metadata arrays for its slots. When capacity is exhausted, the store adds a new segment instead of relocating live records. Existing live handles remain stable.
 
-A `RecordHandle` contains a segment index, slot index, and generation. Releasing a record invalidates its current generation and puts the slot on a reusable free list. Reallocation can reuse that slot with a newer generation. Any read, write, watch, or release through an old generation fails with a predictable stale-handle error rather than accidentally accessing a different record.
+A `RecordHandle` contains a segment index, slot index, generation, layout identity, and an opaque store-owner identity. Releasing a record invalidates its current generation and returns its slot to a reusable free list. Reallocation can reuse that slot with a newer generation. Any read, write, watch, or release through an old generation or a handle from another store fails with a predictable stale-handle error rather than accessing a different record.
 
 ## Record lifetime
 
@@ -34,14 +38,14 @@ A `RecordHandle` contains a segment index, slot index, and generation. Releasing
 4. Dispose subscriptions associated with the record when no longer needed.
 5. Release the handle when the record is permanently retired.
 
-Releasing a record invalidates its subscriptions. A release is a lifecycle operation, not a state-change event that can safely be recovered by reading the old handle.
+Release is a lifecycle operation, not a state change that can safely be recovered by reading the old handle. It invalidates subscriptions for that record. Releasing during a listener callback is safe: later callbacks only run while their subscriptions and the store remain active. A Flutter record builder with an `unavailableBuilder` can render a lifecycle-specific replacement after its target is released.
 
 ## Alignment and bounds
 
-Each field begins at the next offset aligned for its declared scalar representation. The layout's record stride is rounded to its maximum field alignment. Offset, slot, and byte-range checks remain enabled in release builds; assertions supplement but do not replace validation.
+Each field begins at the next offset aligned for its declared scalar representation. The layout record stride is rounded to its maximum field alignment. Offset, slot, and byte-range checks remain enabled in release builds; assertions supplement but do not replace validation.
 
 ## Zero-copy behavior and limits
 
-The store exposes read-only, bounded byte views for fixed-size byte fields when the view can safely stay within the record's segment. Those views alias storage: they are snapshots of neither record lifetime nor future writes. Applications must not retain a view after releasing its record, and must copy it if a durable snapshot is required.
+The store exposes read-only, bounded byte views for fixed-size byte fields when the view can safely stay within the record segment. Those views alias storage: they are not snapshots of record lifetime or future writes. Applications must not retain a view after releasing its record and must copy it for a durable snapshot. The core rejects a retained reader or byte-view access while its store has an active transaction, preventing synchronous code from observing write-through bytes before commit.
 
-Scalar reads do not allocate record objects or copy an entire record. A record itself is not safely transferable between isolates. `TransferableTypedData` transfers byte ownership, not shared mutable access.
+Scalar reads do not allocate record objects or copy an entire record. A record is not transferable between isolates. `TransferableTypedData` transfers byte ownership, not shared mutable access.
