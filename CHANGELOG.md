@@ -9,7 +9,8 @@ Repository-level changes are summarized here. Each publishable package maintains
 
 - Split the Dart-only data plane from the Flutter UI adapter into independently publishable packages.
 - Documented the package boundary, isolate ownership model, transaction and delivery behavior, and release workflow.
-- Added CI coverage for formatting, analysis, tests, and publication dry runs for the core and Flutter adapter, plus analysis and tests for the example.
+- Added branch-wide CI for formatting, unit and integration tests, coverage summaries, publication dry runs, and example validation; verified `main` revisions create package tags for pub.dev trusted publishing.
+- Added a reviewable `publish/` workflow artifact containing only the core and Flutter packages, with every example directory excluded.
 - Hardened lifecycle and delivery behavior around listener-side release, disposal, failures, bounded ordered reentrant immediate delivery, bounded journal admission, reusable transaction scratch storage, transaction net-change tracking, store-owned handles, and Dart web-compatible typed-memory storage.
 
 ## 0.1.0

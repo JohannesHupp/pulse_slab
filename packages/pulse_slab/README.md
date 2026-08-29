@@ -32,9 +32,11 @@ dependencies:
 
 For local development in this repository, point a consuming package at `../packages/pulse_slab`.
 
-For the paired release, publish `pulse_slab` 0.2.0 before
-`pulse_slab_flutter` 0.2.0. The Flutter adapter declares a normal pub
-dependency on this core package.
+For a paired release, `pulse_slab` must be available before
+`pulse_slab_flutter`. The Flutter adapter declares a normal pub dependency on
+this core package. The repository release automation publishes the core first
+and makes the adapter wait until the required core version is visible on
+pub.dev.
 
 ## Quick start
 
@@ -189,7 +191,7 @@ dart test -p chrome test/web_portability_test.dart
 
 ## Pub.dev readiness
 
-The package includes pub.dev metadata, semantic versioning, license, changelog, a Dart example, tests, benchmarks, and analysis configuration. It is prepared for review and a dry run; it is not published by this repository. The Flutter adapter is separately publishable and the telemetry example is independently runnable from `packages/pulse_slab_flutter`.
+The package includes pub.dev metadata, semantic versioning, license, changelog, a Dart example, tests, benchmarks, and analysis configuration. It is ready for release verification; see the repository [release automation guide](../../docs/releasing.md) for the tagged publishing process. The Flutter adapter is separately publishable and the telemetry example is independently runnable from `packages/pulse_slab_flutter`.
 
 ## Further reading
 

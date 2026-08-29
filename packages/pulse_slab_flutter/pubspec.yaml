@@ -14,9 +14,6 @@ topics:
 environment:
   sdk: '>=3.6.0 <4.0.0'
 
-workspace:
-  - example
-
 dependencies:
   flutter:
     sdk: flutter

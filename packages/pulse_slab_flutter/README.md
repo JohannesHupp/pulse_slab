@@ -24,8 +24,9 @@ import 'package:pulse_slab_flutter/pulse_slab_flutter.dart';
 
 For local development in this repository, run `dart pub get` from the
 repository root. Its Pub workspace resolves the adjacent 0.2.0 core package
-without an override file. Publish `pulse_slab` 0.2.0 before publishing this
-adapter's 0.2.0 release so normal pub resolution can use the core package.
+without an override file. The repository release automation publishes
+`pulse_slab` before this adapter and waits until the required core version is
+available from pub.dev.
 
 ## Quick start
 

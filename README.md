@@ -48,11 +48,13 @@ Workspace development requires Dart 3.6 or later.
 
 See the core [README](packages/pulse_slab/README.md), the Flutter adapter [README](packages/pulse_slab_flutter/README.md), and the [design documentation](docs/architecture.md).
 
-## Release status
+## Release automation
 
-The source tree is prepared for a 0.2.0 release review, with separately publishable core and Flutter packages, metadata, tests, benchmarks, documentation, and CI checks. Neither package is published by this repository. A `dart pub publish --dry-run` is part of the verification workflow; publishing remains an explicit maintainer action.
+Every push and pull request runs core, Flutter adapter, and telemetry-example tests before coverage collection and publication validation. The GitHub Actions summary includes a compact per-package coverage table, and the workflow uploads an isolated `publish/` artifact containing the two packages without their examples.
 
-Publish `pulse_slab` 0.2.0 before `pulse_slab_flutter` 0.2.0: the adapter has a normal pub dependency on the core release. The telemetry application is an independently runnable example, not a publishable package.
+A verified push to `main` is a release: it creates versioned package tags and publishes the corresponding package to pub.dev through GitHub OIDC trusted publishing. The core is published before the Flutter adapter, and the adapter workflow waits for its required core version to become visible on pub.dev.
+
+The first release of each package still requires the one-time pub.dev bootstrap and GitHub environment configuration described in [Release automation](docs/releasing.md). After that setup, maintainers release by updating the relevant package version and changelog, then merging the release change to `main`. The telemetry application remains an independently runnable example and is never published.
 
 Repository and issue tracker:
 

@@ -3,18 +3,24 @@ name: Verify packages
 on:
   push:
     branches:
-      - main
+      - '**'
   pull_request:
+    branches:
+      - '**'
   workflow_dispatch:
 
 permissions:
   contents: read
 
+concurrency:
+  group: verify-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
 jobs:
-  dart_core:
-    name: Dart core
+  core_tests:
+    name: Core unit and integration tests
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
     defaults:
       run:
         working-directory: packages/pulse_slab
@@ -26,21 +32,19 @@ jobs:
         with:
           channel: stable
           cache: true
-      - name: Resolve dependencies
+      - name: Resolve workspace dependencies
         run: dart pub get
       - name: Verify formatting
-        run: dart format --output=none --set-exit-if-changed lib test benchmark example
-      - name: Analyze
+        run: dart format --output=none --set-exit-if-changed lib test benchmark example ../../tools
+      - name: Analyze core package
         run: dart analyze
-      - name: Test
+      - name: Run VM unit and integration tests
         run: dart test
-      - name: Test browser portability path
+      - name: Run Chrome portability integration test
         run: dart test -p chrome test/web_portability_test.dart
-      - name: Verify publication package
-        run: dart pub publish --dry-run
 
-  flutter_adapter:
-    name: Flutter adapter
+  flutter_adapter_tests:
+    name: Flutter adapter unit and widget tests
     runs-on: ubuntu-latest
     timeout-minutes: 20
     defaults:
@@ -54,19 +58,17 @@ jobs:
         with:
           channel: stable
           cache: true
-      - name: Resolve dependencies
+      - name: Resolve workspace dependencies
         run: flutter pub get
       - name: Verify formatting
         run: dart format --output=none --set-exit-if-changed lib test
-      - name: Analyze
+      - name: Analyze Flutter adapter
         run: flutter analyze
-      - name: Test
-        run: flutter test
-      - name: Verify publication package
-        run: dart pub publish --dry-run
+      - name: Run Flutter adapter tests
+        run: flutter test --no-pub
 
-  flutter_example:
-    name: Flutter example
+  flutter_example_tests:
+    name: Flutter telemetry integration tests
     runs-on: ubuntu-latest
     timeout-minutes: 20
     defaults:
@@ -80,13 +82,157 @@ jobs:
         with:
           channel: stable
           cache: true
-      - name: Resolve dependencies
+      - name: Resolve workspace dependencies
         run: flutter pub get
       - name: Verify formatting
         run: dart format --output=none --set-exit-if-changed lib test
-      - name: Analyze
+      - name: Analyze telemetry example
         run: flutter analyze
-      - name: Test
-        run: flutter test
-      - name: Build web example
+      - name: Run telemetry integration tests
+        run: flutter test --no-pub
+      - name: Build telemetry example for web
         run: flutter build web
+
+  coverage:
+    name: Coverage report
+    needs:
+      - core_tests
+      - flutter_adapter_tests
+      - flutter_example_tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+      - name: Resolve workspace dependencies
+        run: dart pub get
+      - name: Collect core coverage
+        working-directory: packages/pulse_slab
+        run: dart test --coverage=coverage
+      - name: Convert core coverage to LCOV
+        working-directory: packages/pulse_slab
+        run: >-
+          dart run coverage:format_coverage --lcov --in=coverage
+          --out=coverage/lcov.info --package=. --report-on=lib
+      - name: Collect Flutter adapter coverage
+        working-directory: packages/pulse_slab_flutter
+        run: flutter test --no-pub --coverage
+      - name: Write coverage table to the job summary
+        run: |
+          dart run tools/coverage_summary.dart \
+            --input pulse_slab=packages/pulse_slab/coverage/lcov.info \
+            --input pulse_slab_flutter=packages/pulse_slab_flutter/coverage/lcov.info \
+            --output coverage/summary.md
+          cat coverage/summary.md >> "$GITHUB_STEP_SUMMARY"
+      - name: Upload coverage reports
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-reports-${{ github.sha }}
+          if-no-files-found: error
+          path: |
+            packages/pulse_slab/coverage/lcov.info
+            packages/pulse_slab_flutter/coverage/lcov.info
+            coverage/summary.md
+
+  package_snapshot:
+    name: Publication package snapshot
+    needs: coverage
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+      - name: Resolve workspace dependencies
+        run: flutter pub get
+      - name: Build isolated publication snapshot
+        run: dart run tools/prepare_publish_packages.dart
+      - name: Verify that publication snapshot contains no examples
+        run: |
+          test ! -d publish/packages/pulse_slab/example
+          test ! -d publish/packages/pulse_slab_flutter/example
+      - name: Validate core publication archive
+        working-directory: packages/pulse_slab
+        run: flutter pub publish --dry-run
+      - name: Validate Flutter publication archive
+        working-directory: packages/pulse_slab_flutter
+        run: flutter pub publish --dry-run
+      - name: Upload publication snapshot
+        uses: actions/upload-artifact@v4
+        with:
+          name: publish-packages-${{ github.sha }}
+          if-no-files-found: error
+          path: publish/
+
+  release_tags:
+    name: Create package release tags
+    needs: package_snapshot
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: pub-dev
+    permissions:
+      contents: write
+    concurrency:
+      group: release-tags-main
+      cancel-in-progress: false
+    steps:
+      - name: Check out verified main revision
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Create missing version tags
+        env:
+          RELEASE_TAG_TOKEN: ${{ secrets.RELEASE_TAG_TOKEN }}
+        run: |
+          set -euo pipefail
+
+          if [[ -z "${RELEASE_TAG_TOKEN:-}" ]]; then
+            echo "::error::RELEASE_TAG_TOKEN is required to create tag-triggered pub.dev releases."
+            exit 1
+          fi
+
+          declare -a tags_to_create=()
+          for package in pulse_slab pulse_slab_flutter; do
+            pubspec="packages/${package}/pubspec.yaml"
+            changelog="packages/${package}/CHANGELOG.md"
+            version="$(awk -F ': *' '/^version:/ { print $2; exit }' "$pubspec")"
+            if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?$ ]]; then
+              echo "::error file=${pubspec}::Expected a semantic package version, found '$version'."
+              exit 1
+            fi
+            if ! grep -Fqx "## $version" "$changelog"; then
+              echo "::error file=${changelog}::Missing a changelog heading for $version."
+              exit 1
+            fi
+
+            tag="${package}-v${version}"
+            if git ls-remote --exit-code --tags origin "refs/tags/${tag}" > /dev/null 2>&1; then
+              echo "Release tag ${tag} already exists."
+            else
+              tags_to_create+=("$tag")
+            fi
+          done
+
+          if [[ ${#tags_to_create[@]} -eq 0 ]]; then
+            echo "::error::A main release requires at least one new package version."
+            exit 1
+          fi
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git remote add release "https://x-access-token:${RELEASE_TAG_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+          for tag in "${tags_to_create[@]}"; do
+            git tag --annotate "$tag" "$GITHUB_SHA" --message "Release $tag"
+          done
+          git push release "${tags_to_create[@]}"

@@ -20,3 +20,39 @@ dart pub publish --dry-run
 Run Flutter adapter and telemetry example checks from
 `packages/pulse_slab_flutter` and `packages/pulse_slab_flutter/example`.
 The root README contains the complete verification command set.
+
+## Publication staging
+
+Create an isolated workspace containing only the two publishable packages:
+
+~~~powershell
+dart run tools/prepare_publish_packages.dart
+~~~
+
+The command replaces the repository-local `publish/` directory after checking
+that it is a safe direct child of the repository. The staged workspace contains
+`packages/pulse_slab` and `packages/pulse_slab_flutter`, excludes every
+`example` directory, and removes the adapter's nested example workspace entry.
+It is the reviewable publication artifact uploaded by CI; do not commit
+generated `publish/` output.
+
+Run publication dry runs from the source package directories instead. Pub
+validates Git ignore rules, so it can reject a package inside the generated,
+Git-ignored `publish/` directory. The source package `.pubignore` files exclude
+examples from the actual pub.dev archives too.
+
+Remove generated staging output with:
+
+~~~powershell
+dart run tools/prepare_publish_packages.dart --clean
+~~~
+
+## Coverage summary
+
+The CI workflow writes a compact per-package LCOV table to the GitHub Actions
+job summary. Generate the same Markdown report locally after collecting core
+and Flutter coverage:
+
+~~~powershell
+dart run tools/coverage_summary.dart --input pulse_slab=packages/pulse_slab/coverage/lcov.info --input pulse_slab_flutter=packages/pulse_slab_flutter/coverage/lcov.info --output coverage/summary.md
+~~~
