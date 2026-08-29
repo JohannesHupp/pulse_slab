@@ -1,0 +1,93 @@
+name: Backfill GitHub package releases
+
+on:
+  workflow_dispatch:
+    inputs:
+      tags:
+        description: Comma- or whitespace-separated package tags to attach to GitHub Releases.
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  backfill:
+    name: Create missing GitHub package releases
+    runs-on: ubuntu-latest
+    environment: pub-dev
+    timeout-minutes: 10
+
+    steps:
+      - name: Create missing releases for existing tags
+        uses: actions/github-script@v7
+        env:
+          PACKAGE_TAGS: ${{ inputs.tags }}
+        with:
+          github-token: ${{ github.token }}
+          script: |
+            const tagNames = [
+              ...new Set(
+                process.env.PACKAGE_TAGS.split(/[\s,]+/).filter(Boolean),
+              ),
+            ];
+            const tagPattern =
+              /^(pulse_slab(?:_flutter)?)-v(\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?)$/;
+
+            if (tagNames.length === 0) {
+              throw new Error('Provide at least one package tag.');
+            }
+
+            for (const tagName of tagNames) {
+              const match = tagPattern.exec(tagName);
+              if (match === null) {
+                throw new Error(`Unsupported package tag: ${tagName}`);
+              }
+
+              const [, packageName, version] = match;
+              await github.rest.git.getRef({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                ref: `tags/${tagName}`,
+              });
+
+              try {
+                await github.rest.repos.getReleaseByTag({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  tag: tagName,
+                });
+                core.notice(`GitHub release for ${tagName} already exists.`);
+                continue;
+              } catch (error) {
+                if (error.status !== 404) {
+                  throw error;
+                }
+              }
+
+              const prerelease = version.includes('-');
+              const changelogUrl =
+                `https://github.com/${context.repo.owner}/${context.repo.repo}` +
+                `/blob/${tagName}/packages/${packageName}/CHANGELOG.md`;
+              const body =
+                `Published [\`${packageName}\`](https://pub.dev/packages/${packageName}/versions/${version}) ` +
+                `version \`${version}\` to pub.dev.\n\n` +
+                `See the [package changelog](${changelogUrl}).`;
+
+              try {
+                await github.rest.repos.createRelease({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  tag_name: tagName,
+                  name: `${packageName} ${version}`,
+                  body,
+                  prerelease,
+                });
+                core.info(`Created GitHub release for ${tagName}.`);
+              } catch (createError) {
+                if (createError.status !== 422) {
+                  throw createError;
+                }
+                core.notice(`GitHub release for ${tagName} was created concurrently.`);
+              }
+            }
