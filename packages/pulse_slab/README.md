@@ -2,7 +2,7 @@
 
 [![pub package](https://img.shields.io/pub/v/pulse_slab.svg)](https://pub.dev/packages/pulse_slab)
 
-A compact, transactional reactive data store for high-throughput Dart and Flutter applications. `pulse_slab` stores fixed-layout scalar records in reusable typed-memory segments, assigns stable generation-checked handles, and delivers only the committed field changes each consumer selected.
+A compact, transactional reactive data store for high-throughput Dart applications. `pulse_slab` stores fixed-layout scalar records in reusable typed-memory segments, assigns stable generation-checked handles, and delivers only the committed field changes each consumer selected. Flutter UI bindings live in the separate `pulse_slab_flutter` package.
 
 ## Why the name?
 
@@ -12,7 +12,7 @@ A compact, transactional reactive data store for high-throughput Dart and Flutte
 
 - High-frequency telemetry, monitoring, simulation, gaming, and industrial-control views.
 - Thousands of compact numeric record updates per second.
-- Flutter surfaces where the UI should receive the newest relevant state once per frame, not every input update.
+- Flutter applications through the separate `pulse_slab_flutter` adapter, which can deliver the newest relevant state once per frame instead of rebuilding for every input update.
 - Data pipelines that benefit from explicit record layouts, typed field descriptors, transaction boundaries, and bounded change retention.
 
 ## Not suitable for
@@ -27,10 +27,14 @@ The package has not been published yet. Once it is available, use the released v
 
 ```yaml
 dependencies:
-  pulse_slab: ^0.1.0
+  pulse_slab: ^0.2.0
 ```
 
 For local development in this repository, point a consuming package at `../packages/pulse_slab`.
+
+For the paired release, publish `pulse_slab` 0.2.0 before
+`pulse_slab_flutter` 0.2.0. The Flutter adapter declares a normal pub
+dependency on this core package.
 
 ## Quick start
 
@@ -82,43 +86,55 @@ store.release(sensor);
 store.dispose();
 ```
 
-Field descriptor names are metadata. Hot reads and writes use the stable descriptor and its resolved byte offset, not a string lookup. A layout permits at most 63 dirty-tracked fields because it uses a non-negative signed integer field mask.
+Field descriptor names are metadata. Hot reads and writes use the stable descriptor and its resolved byte offset, not a string lookup. A layout permits at most 31 dirty-tracked fields because it uses a portable, non-negative integer field mask.
 
 ## Delivery policies
 
 | Policy | Behavior | Queue bound |
 | --- | --- | --- |
-| `immediate` | Calls matching listeners immediately after a successful commit. | No pending state queue. |
+| `immediate` | Calls matching listeners immediately after a successful commit. | No normal queue; reentrant listener calls use a fixed replaceable queue. |
 | `latest` | Keeps only the latest merged state change per subscription until `flush()`. | One pending change per subscription. |
 | `batched` | Retains compact changes until `flush()`. | Fixed journal and subscription bounds. |
 
-Subscriptions are scoped to one handle and may filter by a field mask. Dispatch order is registration order. Removing a subscription during dispatch is safe; a removed listener will not be invoked later in the same dispatch. A listener may start a new transaction after the original commit. With immediate delivery that nested change can dispatch synchronously; latest and batched delivery retain it until the next explicit flush. Prefer deferring feedback loops when a flat callback sequence is easier to reason about.
+Subscriptions are scoped to one handle and may filter by a field mask. Dispatch order is registration order. Removing a subscription during dispatch is safe; a removed listener will not be invoked later in the same dispatch. A listener may start a new transaction after the original commit. A reentrant immediate change commits synchronously but its immediate listener calls wait until the active traversal finishes. The fixed `maxReentrantImmediateDeliveries` queue replaces its oldest pending state delivery when full and increments `droppedReentrantImmediateDeliveryCount`; it never rejects a committed write. Reentrant `latest` and `batched` subscriptions are routed into their own bounded policy queues immediately, so their coalescing semantics are preserved. Latest and batched delivery retain changes until the next explicit flush. `flush()` rejects reentrant calls from a latest or batched delivery callback. Prefer deferring feedback loops when a flat callback sequence is easier to reason about.
+
+If a queued reentrant immediate listener fails, the first failure is rethrown
+when the outermost delivery traversal completes. It never rolls back either
+already committed state change.
+
+Transaction and `update` actions must be synchronous; a returned `Future` is
+rejected and the synchronous prefix is rolled back. Record listeners and
+invalidation callbacks are also synchronous APIs: their returned futures are
+not awaited or routed through the store's listener-failure behavior. Start
+asynchronous work only after capturing the committed data it needs.
 
 While a transaction callback is active, public `read`, `versionOf`, `watch`, and
-`flush` calls reject access. Use the transaction writer's `get` method for an
-in-transaction read. This prevents synchronous consumers from observing
-partially written record bytes before the commit boundary.
+`flush` calls reject access. Retained readers and fixed-byte views reject access
+as well. Use the transaction writer's `get` method for an in-transaction read.
+This prevents synchronous consumers from observing partially written record
+bytes before the commit boundary.
 
 ## Flutter integration
 
-Import the self-contained Flutter facade in Flutter code. It re-exports the core data-plane API as well as Flutter adapters:
+This package intentionally has no Flutter SDK dependency. Flutter applications
+should depend on the separately publishable adapter, which re-exports this core
+API:
 
-```dart
-import 'package:pulse_slab/pulse_slab_flutter.dart';
+~~~yaml
+dependencies:
+  pulse_slab_flutter: ^0.2.0
+~~~
 
-ReactiveRecordBuilder(
-  store: store,
-  handle: sensor,
-  fields: temperature.mask,
-  builder: (context, record) {
-    return Text(record.get(temperature).toStringAsFixed(1) + ' C');
-  },
-);
-```
+~~~dart
+import 'package:pulse_slab_flutter/pulse_slab_flutter.dart';
+~~~
 
-The builder owns a field-filtered subscription and uses frame-coalesced notification by default. A temperature-only builder does not rebuild when only `status` changes. For deterministic widget tests, use `ReactiveRecordListenable` with `FlutterDeliveryPolicy.manual`, call its `flush()`, and then pump the test widget.
-
-The separate [Flutter telemetry example](example) simulates multiple sensors at configurable high update rates. It displays processed input updates, UI-delivered updates, rebuild count, coalesced state updates, and journal utilization.
+`ReactiveRecordBuilder` in that package owns a field-filtered subscription and
+uses frame-coalesced notification by default. A temperature-only builder does
+not rebuild when only `status` changes. The [Flutter telemetry example](https://github.com/JohannesHupp/pulse_slab/tree/main/packages/pulse_slab_flutter/example)
+simulates multiple sensors at configurable high update rates and displays
+processed input updates, UI deliveries, rebuilds, coalescing, and journal
+utilization.
 
 ## Background byte batches
 
@@ -145,7 +161,7 @@ The central principle is:
 
 > Process every important input, but deliver only the state changes that each consumer can use.
 
-This package reduces allocations and redundant work through typed byte storage, reusable slots, field masks, transaction merging, bounded journals, targeted listener lists, and Flutter frame coalescing. Those techniques are workload-specific trade-offs, not a claim that every application will be faster. Benchmark on the target device and workload.
+This package reduces allocations and redundant work through typed byte storage, reusable slots, field masks, transaction merging, bounded journals, and targeted listener lists. The separate Flutter adapter adds frame coalescing. Those techniques are workload-specific trade-offs, not a claim that every application will be faster. Benchmark on the target device and workload.
 
 Run the included smoke benchmark:
 
@@ -153,12 +169,19 @@ Run the included smoke benchmark:
 dart run benchmark/pulse_slab_benchmark.dart
 ```
 
+When Chrome is available, run the browser smoke test as well:
+
+```powershell
+dart test -p chrome test/web_portability_test.dart
+```
+
 ## Current limitations
 
 - Fixed record layouts are runtime descriptors; code generation is planned but not included.
-- A layout is limited to 63 independently dirty-tracked fields.
-- `Uint64Field` retains all raw bits, but values with bit 63 set read as signed two's-complement Dart `int` values; use it as a bit pattern when unsigned arithmetic is needed.
+- A layout is limited to 31 independently dirty-tracked fields so masks remain exact on native and JavaScript targets.
+- `Int64Field` and `Uint64Field` encode two 32-bit words, so the core remains runnable on Flutter web. Dart JavaScript cannot represent every 64-bit `int` exactly; use a fixed byte field for portable full-width identifiers, counters, or unsigned arithmetic. `Uint64Field` uses a signed two's-complement `int` bit pattern when the high bit is set.
 - Writes are single-isolate and single-writer; nested transactions are rejected, while listener-initiated follow-up transactions use the documented delivery policy semantics.
+- Transaction actions, record listeners, and invalidation callbacks are synchronous APIs.
 - The journal represents replaceable state, not lossless events.
 - Zero-copy fixed-byte views are read-only aliases valid only while the record remains live.
 - The worker supports focused byte-batch transforms rather than arbitrary closures.
@@ -166,12 +189,12 @@ dart run benchmark/pulse_slab_benchmark.dart
 
 ## Pub.dev readiness
 
-The package includes pub.dev metadata, semantic versioning, license, changelog, example, tests, benchmarks, and analysis configuration. It is prepared for review and a dry run; it is not published by this repository.
+The package includes pub.dev metadata, semantic versioning, license, changelog, a Dart example, tests, benchmarks, and analysis configuration. It is prepared for review and a dry run; it is not published by this repository. The Flutter adapter is separately publishable and the telemetry example is independently runnable from `packages/pulse_slab_flutter`.
 
 ## Further reading
 
-- [Architecture](https://github.com/pulse-slab/pulse_slab/blob/main/docs/architecture.md)
-- [Memory model](https://github.com/pulse-slab/pulse_slab/blob/main/docs/memory_model.md)
-- [Performance](https://github.com/pulse-slab/pulse_slab/blob/main/docs/performance.md)
-- [Concurrency](https://github.com/pulse-slab/pulse_slab/blob/main/docs/concurrency.md)
-- [Roadmap](https://github.com/pulse-slab/pulse_slab/blob/main/docs/roadmap.md)
+- [Architecture](https://github.com/JohannesHupp/pulse_slab/blob/main/docs/architecture.md)
+- [Memory model](https://github.com/JohannesHupp/pulse_slab/blob/main/docs/memory_model.md)
+- [Performance](https://github.com/JohannesHupp/pulse_slab/blob/main/docs/performance.md)
+- [Concurrency](https://github.com/JohannesHupp/pulse_slab/blob/main/docs/concurrency.md)
+- [Roadmap](https://github.com/JohannesHupp/pulse_slab/blob/main/docs/roadmap.md)

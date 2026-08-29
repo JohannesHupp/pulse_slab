@@ -1,3 +1,6 @@
+import 'dart:async';
+import 'dart:typed_data';
+
 import 'package:pulse_slab/pulse_slab.dart';
 import 'package:test/test.dart';
 
@@ -62,6 +65,37 @@ void main() {
       expect(store.journal.length, 1);
     });
 
+    test('does not accept a handle issued by an independent store', () {
+      final Uint8Field value = Uint8Field('value');
+      final RecordLayout layout = RecordLayout(
+        name: 'StoreOwnership',
+        fields: <Field<Object?>>[value],
+      );
+      final PulseStore firstStore = PulseStore();
+      final PulseStore secondStore = PulseStore();
+      addTearDown(firstStore.dispose);
+      addTearDown(secondStore.dispose);
+      final RecordHandle firstHandle = firstStore.allocate(layout);
+      final RecordHandle secondHandle = secondStore.allocate(layout);
+
+      expect(firstHandle, isNot(equals(secondHandle)));
+      expect(
+        () => firstStore.read(secondHandle),
+        throwsA(isA<StaleRecordHandleException>()),
+      );
+      expect(
+        () => firstStore.update(secondHandle, (TransactionRecordWriter writer) {
+          writer.set(value, 1);
+        }),
+        throwsA(isA<StaleRecordHandleException>()),
+      );
+      expect(
+        () => firstStore.release(secondHandle),
+        throwsA(isA<StaleRecordHandleException>()),
+      );
+      expect(firstStore.versionOf(firstHandle), 0);
+    });
+
     test('rolls back bytes and avoids publication when a transaction throws',
         () {
       final _TelemetrySchema schema = _TelemetrySchema();
@@ -87,6 +121,58 @@ void main() {
       expect(store.versionOf(handle), versionBeforeFailure);
       expect(notifications, 0);
       expect(store.journal.length, 1);
+    });
+
+    test('reuses one growable scratch arena for transaction snapshots', () {
+      final FixedBytesField payload = FixedBytesField('payload', 48);
+      final RecordLayout layout = RecordLayout(
+        name: 'ScratchArena',
+        fields: <Field<Object?>>[payload],
+      );
+      final PulseStore store = PulseStore();
+      addTearDown(store.dispose);
+      final RecordHandle first = store.allocate(layout);
+      final RecordHandle second = store.allocate(layout);
+
+      expect(store.transactionScratchCapacityInBytes, 0);
+      store.transaction<void>((WriteTransaction transaction) {
+        transaction.write(first).set(payload, _filledBytes(48, 1));
+        transaction.write(second).set(payload, _filledBytes(48, 2));
+      });
+
+      final int retainedCapacity = store.transactionScratchCapacityInBytes;
+      final int snapshotBytes = layout.sizeInBytes * 2;
+      expect(retainedCapacity, greaterThanOrEqualTo(snapshotBytes));
+      expect(store.transactionScratchPeakBytes, snapshotBytes);
+
+      store.transaction<void>((WriteTransaction transaction) {
+        transaction.write(first).set(payload, _filledBytes(48, 3));
+        transaction.write(second).set(payload, _filledBytes(48, 4));
+      });
+
+      expect(store.transactionScratchCapacityInBytes, retainedCapacity);
+      expect(store.transactionScratchPeakBytes, snapshotBytes);
+
+      expect(
+        () => store.transaction<void>((WriteTransaction transaction) {
+          transaction.write(first).set(payload, _filledBytes(48, 5));
+          transaction.write(second).set(payload, _filledBytes(48, 6));
+          throw StateError('Intentional scratch-arena rollback.');
+        }),
+        throwsStateError,
+      );
+      expect(
+        store.read(first).get(payload),
+        orderedEquals(_filledBytes(48, 3)),
+      );
+      expect(
+        store.read(second).get(payload),
+        orderedEquals(_filledBytes(48, 4)),
+      );
+      expect(store.transactionScratchCapacityInBytes, retainedCapacity);
+
+      store.dispose();
+      expect(store.transactionScratchCapacityInBytes, 0);
     });
 
     test('rejects nested transactions and stale transaction writers', () {
@@ -132,6 +218,117 @@ void main() {
       });
 
       expect(store.read(handle).get(schema.temperature), 18.0);
+    });
+
+    test('blocks retained readers and byte views during a transaction', () {
+      final Uint16Field value = Uint16Field('value');
+      final FixedBytesField bytes = FixedBytesField('bytes', 2);
+      final RecordLayout layout = RecordLayout(
+        name: 'RetainedReader',
+        fields: <Field<Object?>>[value, bytes],
+      );
+      final PulseStore store = PulseStore();
+      addTearDown(store.dispose);
+      final RecordHandle handle = store.allocate(layout);
+      store.update(handle, (TransactionRecordWriter writer) {
+        writer.set(value, 7);
+        writer.set(bytes, Uint8List.fromList(<int>[3, 4]));
+      });
+      final RecordReader reader = store.read(handle);
+      final ByteView byteView = reader.bytesView(bytes);
+
+      store.transaction<void>((WriteTransaction transaction) {
+        transaction.write(handle).set(value, 8);
+
+        expect(() => reader.get(value), throwsStateError);
+        expect(() => reader.version, throwsStateError);
+        expect(() => byteView[0], throwsStateError);
+      });
+
+      expect(reader.get(value), 8);
+      expect(byteView[0], 3);
+    });
+
+    test('rejects asynchronous transaction actions and rolls back writes',
+        () async {
+      final Uint16Field value = Uint16Field('value');
+      final RecordLayout layout = RecordLayout(
+        name: 'SynchronousTransactions',
+        fields: <Field<Object?>>[value],
+      );
+      final PulseStore store = PulseStore();
+      addTearDown(store.dispose);
+      final RecordHandle handle = store.allocate(layout);
+      late Future<void> asynchronousAction;
+
+      expect(
+        () => store.transaction<Future<void>>((WriteTransaction transaction) {
+          asynchronousAction = _asynchronousWrite(transaction, handle, value);
+          return asynchronousAction;
+        }),
+        throwsArgumentError,
+      );
+      await asynchronousAction;
+
+      expect(store.read(handle).get(value), 0);
+      expect(store.versionOf(handle), 0);
+      expect(store.committedChangeCount, 0);
+    });
+
+    test('contains deferred writer failures from a rejected transaction',
+        () async {
+      final Uint16Field value = Uint16Field('value');
+      final RecordLayout layout = RecordLayout(
+        name: 'RejectedDeferredWrite',
+        fields: <Field<Object?>>[value],
+      );
+      final PulseStore store = PulseStore();
+      addTearDown(store.dispose);
+      final RecordHandle handle = store.allocate(layout);
+      final Completer<Object> deferredFailure = Completer<Object>();
+      late Future<void> asynchronousAction;
+
+      expect(
+        () => store.transaction<Future<void>>((WriteTransaction transaction) {
+          asynchronousAction = _asynchronousWriteAfterBoundary(
+            transaction,
+            handle,
+            value,
+            deferredFailure,
+          );
+          return asynchronousAction;
+        }),
+        throwsArgumentError,
+      );
+
+      expect(await deferredFailure.future, isA<StateError>());
+      expect(store.read(handle).get(value), 0);
+      expect(store.versionOf(handle), 0);
+    });
+
+    test('rejects asynchronous update actions and rolls back writes', () async {
+      final Uint16Field value = Uint16Field('value');
+      final RecordLayout layout = RecordLayout(
+        name: 'SynchronousUpdates',
+        fields: <Field<Object?>>[value],
+      );
+      final PulseStore store = PulseStore();
+      addTearDown(store.dispose);
+      final RecordHandle handle = store.allocate(layout);
+      late Future<void> asynchronousAction;
+
+      expect(
+        () => store.update(handle, (TransactionRecordWriter writer) {
+          asynchronousAction = _asynchronousUpdate(writer, value);
+          return asynchronousAction;
+        }),
+        throwsArgumentError,
+      );
+      await asynchronousAction;
+
+      expect(store.read(handle).get(value), 0);
+      expect(store.versionOf(handle), 0);
+      expect(store.committedChangeCount, 0);
     });
   });
 
@@ -324,6 +521,43 @@ void main() {
       expect(journal.rejectedCount, 1);
       expect(journal.take()!.version, 1);
     });
+
+    test('validates public typed-column values before journal admission', () {
+      expect(
+        () => ChangeRecord(
+          segment: -1,
+          slot: 0,
+          generation: 1,
+          version: 1,
+          fieldMask: 1,
+        ),
+        throwsRangeError,
+      );
+      expect(
+        () => ChangeRecord(
+          segment: 0,
+          slot: 0,
+          generation: 1,
+          version: 1,
+          fieldMask: 0x80000000,
+        ),
+        throwsRangeError,
+      );
+    });
+
+    test('rejects merging a change with a lower record version', () {
+      expect(
+        () => _journalRecord(2).mergedWith(_journalRecord(1)),
+        throwsArgumentError,
+      );
+    });
+
+    test('rejects a journal capacity beyond portable typed-data columns', () {
+      expect(
+        () => ChangeJournal(capacity: 0x10000000),
+        throwsRangeError,
+      );
+    });
   });
 
   test('handles high-frequency replaceable updates within bounded storage', () {
@@ -359,6 +593,45 @@ void main() {
     expect(delivered, 64);
     expect(store.latestCoalescedDeliveryCount, greaterThan(10000));
   });
+}
+
+Future<void> _asynchronousWrite(
+  WriteTransaction transaction,
+  RecordHandle handle,
+  Uint16Field value,
+) async {
+  transaction.write(handle).set(value, 7);
+  await Future<void>.value();
+}
+
+Future<void> _asynchronousUpdate(
+  TransactionRecordWriter writer,
+  Uint16Field value,
+) async {
+  writer.set(value, 9);
+  await Future<void>.value();
+}
+
+Future<void> _asynchronousWriteAfterBoundary(
+  WriteTransaction transaction,
+  RecordHandle handle,
+  Uint16Field value,
+  Completer<Object> deferredFailure,
+) async {
+  transaction.write(handle).set(value, 7);
+  await Future<void>.value();
+  try {
+    transaction.write(handle).set(value, 8);
+  } on Object catch (error) {
+    deferredFailure.complete(error);
+    rethrow;
+  }
+}
+
+Uint8List _filledBytes(int length, int value) {
+  final Uint8List bytes = Uint8List(length);
+  bytes.fillRange(0, length, value);
+  return bytes;
 }
 
 void _setTemperature(

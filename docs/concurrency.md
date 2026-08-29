@@ -2,29 +2,49 @@
 
 ## Ownership model
 
-The package uses isolate ownership rather than pretending ordinary Dart memory is shared. The main isolate owns the UI projection store, subscriptions, and Flutter scheduling. A long-lived worker isolate owns decoding or computation for a byte-batch workload and sends compact batches back to the main isolate.
+The pure Dart `pulse_slab` package follows isolate ownership. A store, its typed-memory segments, subscriptions, and record handles belong to one isolate. The optional `pulse_slab_flutter` adapter runs in the UI isolate and observes the main-isolate projection store.
 
 ```mermaid
 flowchart LR
-  Source[Input source] --> Main[Main isolate]
+  Source[Input source] --> Main[Owning isolate]
   Main -->|bounded request protocol| Worker[Long-lived worker isolate]
-  Worker -->|TransferableTypedData projection batch| Main
-  Main --> Store[UI projection store]
-  Store --> Frame[Frame-coalesced Flutter adapter]
+  Worker -->|TransferableTypedData result| Main
+  Main --> Store[Core projection store]
+  Store --> Adapter[Flutter adapter when used]
+  Adapter --> Frame[Frame-coalesced UI]
 ```
 
-`Uint8List`, arbitrary Dart objects, and regular typed-data buffers are not shared mutable memory between isolates. `TransferableTypedData` moves a transferable byte region by ownership transfer; the receiver materializes it. It is not a bidirectional shared buffer.
+`Uint8List`, arbitrary Dart objects, and ordinary typed-data buffers are not shared mutable memory between isolates. `TransferableTypedData` transfers a byte region by ownership; the receiver materializes it. It is not a bidirectional shared buffer, and a `RecordHandle` from one isolate is not valid in another store or isolate.
 
-## Worker protocol and backpressure
+## Main-isolate responsibilities
 
-The byte-batch worker keeps at most a bounded number of messages in flight. If a caller submits faster than the worker can acknowledge, `submit` throws `WorkerBackpressureException` instead of growing an unbounded queue. A producer of replaceable inputs may choose to retain its own latest batch and retry later. A producer of lossless inputs must await capacity or use a separately acknowledged persistent event path; the worker never silently drops a submitted batch.
+The owning isolate is responsible for:
 
-Workers are long-lived. Spawning an isolate per update costs more than it saves and makes latency unpredictable.
+- Allocating, updating, reading, and releasing records.
+- Maintaining transactions, versions, journals, and subscriptions.
+- Applying decoded worker results to the local projection store.
+- Scheduling Flutter frame delivery when the Flutter adapter is present.
+
+The core package remains usable in a command-line or server isolate without loading Flutter. Flutter widgets must stay on the UI isolate and should read the latest committed local projection rather than receive a stream of arbitrary record objects from a worker.
+
+## Worker responsibilities
+
+The focused byte-batch worker is long-lived. It owns its decoding or transformation work and sends compact results back to the caller. Spawning a new isolate for each update would add avoidable startup cost and unstable latency.
+
+The worker accepts transferable byte batches rather than arbitrary closures or shared pointers. This keeps ownership, serialization, and error handling explicit. The API is intentionally focused so it can remain honest about what crosses an isolate boundary.
+
+## Backpressure and event semantics
+
+The worker keeps a bounded number of messages in flight. When capacity is exhausted, submission fails with backpressure instead of appending to an unbounded queue. A replaceable-state producer may retain its own newest batch and retry later. A lossless producer must await capacity or use a separately acknowledged persistent transport.
+
+The core change journal has the same boundary: it is bounded state-observation infrastructure, not an event log. Journal overwrite and reject-newest policies are observable state-delivery trade-offs; neither is a substitute for reliable event delivery.
 
 ## Startup, failure, and shutdown
 
-Worker startup returns a handle only after the worker port is ready. Worker exceptions and uncaught errors are forwarded to the owning isolate as typed errors. Shutdown stops accepting new work, lets already accepted messages finish in receive-port order, requests a worker stop, closes ports, and completes only once the worker confirms it stopped.
+Worker startup completes only after the worker port is ready. Worker exceptions and uncaught errors are forwarded to the owning isolate as typed errors. Shutdown stops new submissions, completes accepted work in receive-port order, requests a worker stop, closes communication ports, and completes after the worker confirms shutdown.
+
+Callers should close workers during application shutdown and dispose Flutter listenables or widgets normally. A disposed store no longer accepts reads, writes, subscriptions, or delivery work.
 
 ## FFI boundary
 
-The core package does not require native compilation. A future FFI backend must be isolated behind a memory abstraction and must document allocation ownership, lifetimes, synchronization, and isolate restrictions. A raw pointer is not an observable store and is not safely accessible from arbitrary isolates without an explicit native synchronization protocol.
+Neither package requires native compilation. A future FFI backend must live behind a dedicated memory abstraction and document allocation ownership, lifetimes, synchronization, and isolate restrictions. A raw pointer is not an observable store and must not be treated as safely shareable across Dart isolates without an explicit native synchronization protocol.

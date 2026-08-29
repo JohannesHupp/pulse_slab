@@ -4,9 +4,13 @@ import 'errors.dart';
 
 /// The largest number of fields supported by one [RecordLayout].
 ///
-/// A layout uses one Dart [int] as its dirty-field mask. Reserving bit 63 keeps
-/// the representation portable and leaves every mask non-negative.
-const int maxFieldsPerLayout = 63;
+/// A layout uses one Dart [int] and bitwise operators as its dirty-field mask.
+/// JavaScript targets apply 32-bit bitwise semantics, so reserving the sign bit
+/// keeps every portable mask non-negative and exact.
+const int maxFieldsPerLayout = 31;
+
+// Typed-data offsets and lengths stay below this portable positive range.
+const int _maximumPortableTypedDataLength = 0x7fffffff;
 
 /// A compact bit set that identifies fields changed by a record write.
 typedef FieldMask = int;
@@ -35,18 +39,20 @@ abstract class Field<T> {
         'A field name must not be empty.',
       );
     }
-    if (byteOffset != null && byteOffset < 0) {
+    if (byteOffset != null &&
+        (byteOffset < 0 || byteOffset >= _maximumPortableTypedDataLength)) {
       throw RangeError.value(
         byteOffset,
         'byteOffset',
-        'A byte offset must be zero or greater.',
+        'A byte offset must be within the portable typed-data range.',
       );
     }
     if (alignment != null && !_isPowerOfTwo(alignment)) {
       throw ArgumentError.value(
         alignment,
         'alignment',
-        'Alignment must be a positive power of two.',
+        'Alignment must be a positive power of two within the portable '
+            'typed-data range.',
       );
     }
   }
@@ -88,6 +94,9 @@ abstract class Field<T> {
   int get index => _index ?? _unboundFieldStateError(name);
 
   /// The field's dirty bit in a change mask.
+  ///
+  /// Layouts are limited to [maxFieldsPerLayout], so this is always a
+  /// non-negative bit that is portable to JavaScript targets.
   FieldMask get mask => 1 << index;
 
   /// Reads a value from [data] at [absoluteOffset].
@@ -103,6 +112,20 @@ abstract class Field<T> {
   /// should write through [RecordWriter.set].
   void write(ByteData data, int absoluteOffset, T value, Endian byteOrder);
 
+  /// Returns whether encoding [value] would change the stored field bytes.
+  ///
+  /// The default scalar implementation uses value equality. Field types with
+  /// byte-level equality semantics, such as floating point and fixed bytes,
+  /// override this method. Custom fields should override it when their
+  /// [writeIfChanged] implementation uses different comparison semantics.
+  bool wouldChange(
+    ByteData data,
+    int absoluteOffset,
+    T value,
+    Endian byteOrder,
+  ) =>
+      read(data, absoluteOffset, byteOrder) != value;
+
   /// Writes [value] only when it differs from the stored value.
   ///
   /// Returns whether bytes changed. Scalar fields use value equality; floating
@@ -113,7 +136,7 @@ abstract class Field<T> {
     T value,
     Endian byteOrder,
   ) {
-    if (read(data, absoluteOffset, byteOrder) == value) {
+    if (!wouldChange(data, absoluteOffset, value, byteOrder)) {
       return false;
     }
     write(data, absoluteOffset, value, byteOrder);
@@ -300,6 +323,9 @@ final class Uint32Field extends Field<int> {
 }
 
 /// A 64-bit signed integer field.
+///
+/// JavaScript targets cannot represent every 64-bit [int] exactly. Use a
+/// [FixedBytesField] for portable full-width values in Flutter web.
 final class Int64Field extends Field<int> {
   /// Creates a 64-bit signed integer field.
   Int64Field(
@@ -316,22 +342,23 @@ final class Int64Field extends Field<int> {
 
   @override
   int read(ByteData data, int absoluteOffset, Endian byteOrder) =>
-      data.getInt64(absoluteOffset, byteOrder);
+      _readSignedInt64(data, absoluteOffset, byteOrder);
 
   @override
   void write(ByteData data, int absoluteOffset, int value, Endian byteOrder) {
-    _checkIntegerRange(value, -0x8000000000000000, 0x7fffffffffffffff, name);
-    data.setInt64(absoluteOffset, value, byteOrder);
+    _writeSignedInt64(data, absoluteOffset, value, byteOrder, name);
   }
 }
 
 /// A 64-bit unsigned integer field.
 ///
-/// Dart VM integers are signed 64-bit values. Values with their high bit set
-/// are therefore represented as their two's-complement negative [int] value
-/// on that runtime; the field still preserves all 64 stored bits. Use a
-/// domain-specific decimal or [BigInt] conversion at an API boundary when a
-/// human-readable unsigned value above `0x7fffffffffffffff` is required.
+/// This field accepts and returns a signed 64-bit bit pattern. A high-bit-set
+/// value is represented as a negative [int], which preserves all raw bits on
+/// native Dart. Use a domain-specific decimal or [BigInt] conversion at an API
+/// boundary when a human-readable unsigned value above
+/// `0x7fffffffffffffff` is required. JavaScript targets cannot represent every
+/// 64-bit [int] exactly, so use a [FixedBytesField] for portable full-width
+/// values in Flutter web.
 final class Uint64Field extends Field<int> {
   /// Creates a 64-bit unsigned integer field.
   Uint64Field(
@@ -348,11 +375,11 @@ final class Uint64Field extends Field<int> {
 
   @override
   int read(ByteData data, int absoluteOffset, Endian byteOrder) =>
-      data.getUint64(absoluteOffset, byteOrder);
+      _readSignedInt64(data, absoluteOffset, byteOrder);
 
   @override
   void write(ByteData data, int absoluteOffset, int value, Endian byteOrder) {
-    data.setUint64(absoluteOffset, value, byteOrder);
+    _writeSignedInt64(data, absoluteOffset, value, byteOrder, name);
   }
 }
 
@@ -371,6 +398,8 @@ final class Float32Field extends Field<double> {
   @override
   int get naturalAlignment => 4;
 
+  static final ByteData _comparisonData = ByteData(4);
+
   @override
   double read(ByteData data, int absoluteOffset, Endian byteOrder) =>
       data.getFloat32(absoluteOffset, byteOrder);
@@ -386,15 +415,30 @@ final class Float32Field extends Field<double> {
   }
 
   @override
+  bool wouldChange(
+    ByteData data,
+    int absoluteOffset,
+    double value,
+    Endian byteOrder,
+  ) {
+    final ByteData comparisonData = _comparisonData;
+    comparisonData.setFloat32(0, value, byteOrder);
+    return data.getUint32(absoluteOffset, byteOrder) !=
+        comparisonData.getUint32(0, byteOrder);
+  }
+
+  @override
   bool writeIfChanged(
     ByteData data,
     int absoluteOffset,
     double value,
     Endian byteOrder,
   ) {
-    final int previousBits = data.getUint32(absoluteOffset, byteOrder);
-    data.setFloat32(absoluteOffset, value, byteOrder);
-    return previousBits != data.getUint32(absoluteOffset, byteOrder);
+    if (!wouldChange(data, absoluteOffset, value, byteOrder)) {
+      return false;
+    }
+    write(data, absoluteOffset, value, byteOrder);
+    return true;
   }
 }
 
@@ -413,6 +457,8 @@ final class Float64Field extends Field<double> {
   @override
   int get naturalAlignment => 8;
 
+  static final ByteData _comparisonData = ByteData(8);
+
   @override
   double read(ByteData data, int absoluteOffset, Endian byteOrder) =>
       data.getFloat64(absoluteOffset, byteOrder);
@@ -428,15 +474,34 @@ final class Float64Field extends Field<double> {
   }
 
   @override
+  bool wouldChange(
+    ByteData data,
+    int absoluteOffset,
+    double value,
+    Endian byteOrder,
+  ) {
+    final ByteData comparisonData = _comparisonData;
+    comparisonData.setFloat64(0, value, byteOrder);
+    // A Dart JavaScript integer cannot represent every 64-bit bit pattern.
+    // Compare exact 32-bit words instead, including the stored byte order.
+    return data.getUint32(absoluteOffset, byteOrder) !=
+            comparisonData.getUint32(0, byteOrder) ||
+        data.getUint32(absoluteOffset + 4, byteOrder) !=
+            comparisonData.getUint32(4, byteOrder);
+  }
+
+  @override
   bool writeIfChanged(
     ByteData data,
     int absoluteOffset,
     double value,
     Endian byteOrder,
   ) {
-    final int previousBits = data.getUint64(absoluteOffset, byteOrder);
-    data.setFloat64(absoluteOffset, value, byteOrder);
-    return previousBits != data.getUint64(absoluteOffset, byteOrder);
+    if (!wouldChange(data, absoluteOffset, value, byteOrder)) {
+      return false;
+    }
+    write(data, absoluteOffset, value, byteOrder);
+    return true;
   }
 }
 
@@ -534,6 +599,20 @@ class BytesField extends Field<Uint8List> {
     Uint8List value,
     Endian byteOrder,
   ) {
+    if (!wouldChange(data, absoluteOffset, value, byteOrder)) {
+      return false;
+    }
+    write(data, absoluteOffset, value, byteOrder);
+    return true;
+  }
+
+  @override
+  bool wouldChange(
+    ByteData data,
+    int absoluteOffset,
+    Uint8List value,
+    Endian byteOrder,
+  ) {
     _checkLength(value);
     final Uint8List destination = data.buffer.asUint8List(
       data.offsetInBytes + absoluteOffset,
@@ -541,7 +620,6 @@ class BytesField extends Field<Uint8List> {
     );
     for (var index = 0; index < length; index++) {
       if (destination[index] != value[index]) {
-        destination.setRange(0, length, value);
         return true;
       }
     }
@@ -647,7 +725,8 @@ final class RecordLayout {
       throw ArgumentError.value(
         alignment,
         'alignment',
-        'Alignment must be a positive power of two.',
+        'Alignment must be a positive power of two within the portable '
+            'typed-data range.',
       );
     }
 
@@ -693,6 +772,13 @@ final class RecordLayout {
           'Field "${field.name}" has invalid alignment ${field.alignment}.',
         );
       }
+      final int fieldByteLength = field.byteLength;
+      if (fieldByteLength <= 0 ||
+          fieldByteLength > _maximumPortableTypedDataLength) {
+        throw LayoutException(
+          'Field "${field.name}" has invalid byte length $fieldByteLength.',
+        );
+      }
 
       final int requestedOffset = field.requestedByteOffset ?? -1;
       final int offset;
@@ -713,7 +799,12 @@ final class RecordLayout {
       } else {
         offset = _alignUp(cursor, field.alignment);
       }
-      cursor = offset + field.byteLength;
+      if (offset > _maximumPortableTypedDataLength - fieldByteLength) {
+        throw LayoutException(
+          'Layout "$name" exceeds the portable typed-data byte limit.',
+        );
+      }
+      cursor = offset + fieldByteLength;
       if (field.alignment > maximumFieldAlignment) {
         maximumFieldAlignment = field.alignment;
       }
@@ -779,9 +870,27 @@ Never _unboundFieldStateError(String name) => throw StateError(
       'Field "$name" must be bound to a RecordLayout before use.',
     );
 
-int _alignUp(int value, int alignment) => (value + alignment - 1) & -alignment;
+int _alignUp(int value, int alignment) {
+  final int remainder = value.remainder(alignment);
+  final int padding = remainder == 0 ? 0 : alignment - remainder;
+  if (value > _maximumPortableTypedDataLength - padding) {
+    throw LayoutException('Layout exceeds the portable typed-data byte limit.');
+  }
+  return value + padding;
+}
 
-bool _isPowerOfTwo(int value) => value > 0 && (value & (value - 1)) == 0;
+bool _isPowerOfTwo(int value) {
+  if (value <= 0 || value > _maximumPortableTypedDataLength) {
+    return false;
+  }
+  while (value > 1) {
+    if (value.remainder(2) != 0) {
+      return false;
+    }
+    value ~/= 2;
+  }
+  return true;
+}
 
 void _checkIntegerRange(int value, int minimum, int maximum, String fieldName) {
   if (value < minimum || value > maximum) {
@@ -792,3 +901,63 @@ void _checkIntegerRange(int value, int minimum, int maximum, String fieldName) {
     );
   }
 }
+
+void _checkSignedInt64Range(int value, String fieldName) {
+  // Use arithmetic rather than a bitwise shift. JavaScript back ends apply
+  // 32-bit semantics to bitwise operations, while this retains native 64-bit
+  // range validation without a non-exact 64-bit literal.
+  final int upperWord = value ~/ _int64WordSize;
+  final int remainder = value.remainder(_int64WordSize);
+  if (upperWord < -0x80000000 ||
+      upperWord > 0x7fffffff ||
+      (upperWord == -0x80000000 && remainder < 0)) {
+    throw RangeError.value(
+      value,
+      fieldName,
+      'Value must fit in a signed 64-bit bit pattern.',
+    );
+  }
+}
+
+int _readSignedInt64(ByteData data, int offset, Endian byteOrder) {
+  final int highWord;
+  final int lowWord;
+  if (byteOrder == Endian.little) {
+    lowWord = data.getUint32(offset, Endian.little);
+    highWord = data.getInt32(offset + 4, Endian.little);
+  } else {
+    highWord = data.getInt32(offset, Endian.big);
+    lowWord = data.getUint32(offset + 4, Endian.big);
+  }
+  return highWord * _int64WordSize + lowWord;
+}
+
+void _writeSignedInt64(
+  ByteData data,
+  int offset,
+  int value,
+  Endian byteOrder,
+  String fieldName,
+) {
+  _checkSignedInt64Range(value, fieldName);
+  final int quotient = value ~/ _int64WordSize;
+  final int remainder = value.remainder(_int64WordSize);
+  final int highWord;
+  final int lowWord;
+  if (remainder < 0) {
+    highWord = quotient - 1;
+    lowWord = remainder + _int64WordSize;
+  } else {
+    highWord = quotient;
+    lowWord = remainder;
+  }
+  if (byteOrder == Endian.little) {
+    data.setUint32(offset, lowWord, Endian.little);
+    data.setInt32(offset + 4, highWord, Endian.little);
+  } else {
+    data.setInt32(offset, highWord, Endian.big);
+    data.setUint32(offset + 4, lowWord, Endian.big);
+  }
+}
+
+const int _int64WordSize = 0x100000000;
