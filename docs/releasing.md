@@ -23,9 +23,11 @@ flowchart LR
   CoreTag --> CorePublish[Publish pulse_slab]
   FlutterTag --> Wait[Wait for required core version]
   CorePublish --> PubDev[pub.dev]
+  CorePublish --> CoreRelease[Create pulse_slab GitHub Release]
   CorePublish --> Wait
   Wait --> FlutterPublish[Publish pulse_slab_flutter]
   FlutterPublish --> PubDev
+  FlutterPublish --> FlutterRelease[Create pulse_slab_flutter GitHub Release]
 ~~~
 
 ## Verification on every branch
@@ -107,9 +109,10 @@ dart tools/prepare_publish_packages.dart --clean
 
 ## Release rule
 
-A verified push to `main` must contain at least one new package version. The
-`release_tags` job checks the matching package changelog heading and creates a
-tag only when it does not already exist:
+A verified push to `main` that changes either publishable package directory
+must contain at least one new package version. The `release_tags` job checks
+the matching package changelog heading and creates a tag only when it does not
+already exist:
 
 | Package | Release tag |
 | --- | --- |
@@ -119,8 +122,10 @@ tag only when it does not already exist:
 This supports an independent patch release of either package. If both versions
 change together, both tags are created. Re-running a release after a partial
 success is safe: existing tags are left unchanged and only missing tags are
-created. A merge to `main` with no new package version fails the release-tag
-job rather than silently creating a non-versioned release.
+created. A merge to `main` that changes a package but has no new package
+version fails the release-tag job rather than silently creating a non-versioned
+release. A maintenance-only merge that does not change either package directory
+succeeds without creating tags or publishing packages.
 
 The existing repository-wide `0.1.0-alpha` tag is a legacy tag. It is preserved
 unchanged, does not match either package publishing trigger, and does not count
@@ -128,14 +133,37 @@ as `pulse_slab-v0.1.0-alpha` or `pulse_slab_flutter-v0.1.0-alpha`. The release
 job emits a notice when it encounters a legacy tag with the same version and
 continues with the package-specific tag namespace.
 
+## GitHub Releases
+
+After a package has been successfully published to pub.dev, the matching
+tag-triggered workflow creates one GitHub Release for the same package tag. The
+release title is `<package> <version>`, its notes link to the package changelog,
+and semantic prerelease versions such as `0.2.0-beta.2` are marked as GitHub
+pre-releases. Stable versions such as `1.0.0` are regular GitHub Releases.
+
+The creation jobs are idempotent: an existing GitHub Release for the tag is
+reused. If only a release-creation job fails after pub.dev publication, rerun
+that failed job; it does not rerun the immutable package upload.
+
+For tags created before this automation existed, use the **Backfill GitHub
+package releases** workflow from `main`. Provide one or more comma- or
+whitespace-separated package tags, for example:
+
+~~~text
+pulse_slab-v0.2.0-beta.2,pulse_slab_flutter-v0.2.0-beta.2
+~~~
+
+The backfill workflow validates that each tag exists, creates only missing
+GitHub Releases, and never calls pub.dev.
+
 ## Version policy
 
-The current release candidate is `0.2.0-beta.2`. The initial
+The current published prerelease is `0.2.0-beta.2`. The initial
 `0.2.0-beta.1` releases were published manually to create the pub.dev package
-records required before trusted publishing can be enabled. Pre-1.0 development releases
-use numbered semantic prerelease identifiers such as `0.2.0-beta.2`; numbering
-makes subsequent beta releases unambiguous and preserves normal Pub version
-ordering.
+records required before trusted publishing can be enabled. Subsequent pre-1.0
+development releases use numbered semantic prerelease identifiers such as
+`0.2.0-beta.3`; numbering makes beta releases unambiguous and preserves normal
+Pub version ordering.
 
 The first stable public release is planned as `1.0.0`, without a `-beta`
 suffix. Once that version is released, it is immutable on pub.dev. Later
