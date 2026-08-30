@@ -90,6 +90,9 @@ Implementation details stay under each package's `lib/src` directory. The core p
 
 ## Delivery and lifecycle boundaries
 
+- The complete capacity, ordering, overflow, flush, reentrancy, and
+  per-subscription metric contract is in
+  [Delivery policy design](delivery_policies.md).
 - Record subscriptions are stored per handle, so dispatch does not scan a global listener collection.
 - Matching callbacks run in registration order after state has committed. Removing a subscription during dispatch is safe; inactive subscriptions are skipped.
 - Immediate listener calls created by a reentrant commit wait until the active traversal finishes. The fixed `maxReentrantImmediateDeliveries` ring retains synchronous state commits and replaces its oldest pending delivery when full, incrementing `droppedReentrantImmediateDeliveryCount`. Reentrant latest and batched subscriptions enter their own policy queues immediately.

@@ -264,7 +264,7 @@ for new portable identifiers, counters, and unsigned values.
 | --- | --- | --- |
 | `immediate` | Calls matching listeners immediately after a successful commit. | No normal queue; reentrant listener calls use a fixed replaceable queue. |
 | `latest` | Keeps only the latest merged state change per subscription until `flush()`. | One pending change per subscription. |
-| `batched` | Retains bounded state changes until `flush()`. | Fixed journal and subscription bounds. |
+| `batched` | Retains matching state changes in arrival order until `flush()`. | Fixed store-wide delivery ring; a full ring replaces its oldest pending delivery. |
 
 Subscriptions are scoped to one handle and may filter by a compact field mask or
 a wide `FieldSelection`. Dispatch order is registration order. Removing a
@@ -284,6 +284,16 @@ flat callback sequence is easier to reason about.
 If a queued reentrant immediate listener fails, the first failure is rethrown
 when the outermost delivery traversal completes. It never rolls back either
 already committed state change.
+
+Each `StoreSubscription` exposes allocation-free scalar metrics for its own
+delivery work: `pendingDeliveries`, `deliveredCount`, `coalescedCount`, and
+`droppedCount`. `pendingDeliveries` is a current gauge; the remaining values
+are cumulative. Latest replacement increments `coalescedCount`, while
+`droppedCount` only records an explicit eviction from a full batched or
+reentrant-immediate delivery ring. Journal overwrite and rejection metrics are
+separate from subscription delivery metrics. The complete ordering, capacity,
+flush, reentrancy, and metric contract is in the repository's
+[delivery policy design](../../docs/delivery_policies.md).
 
 Transaction and `update` actions must be synchronous; a returned `Future` is
 rejected and the synchronous prefix is rolled back. Record listeners and

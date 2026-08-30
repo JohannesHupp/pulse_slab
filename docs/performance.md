@@ -63,17 +63,24 @@ Use an explicit transaction when multiple field writes form one logical update. 
 | --- | --- | --- |
 | `immediate` | Matching listeners run after the commit. | No normal queue; reentrant listener calls use a fixed replaceable queue. |
 | `latest` | Each subscription retains only its latest relevant change until a flush. | One pending change per subscription. |
-| `batched` | Bounded state changes accumulate until an explicit flush. | Journal and subscription bounds apply. |
+| `batched` | Matching state changes accumulate in arrival order until an explicit flush. | One fixed store-wide delivery ring; a full ring replaces its oldest pending delivery. |
 
 The Flutter adapter uses a frame scheduler by default. It can accept many core commits while a widget receives only the latest state for its selected fields once per rendered frame. Manual flushing remains available for deterministic widget tests.
+
+Each `StoreSubscription` exposes allocation-free scalar delivery metrics. Its
+current `pendingDeliveries` gauge and monotonic `deliveredCount`,
+`coalescedCount`, and `droppedCount` counters are maintained while that
+subscription is routed; reading them neither allocates a snapshot nor scans
+other listeners. See the [delivery policy design](delivery_policies.md) for the
+precise capacity, overflow, and reentrancy contract.
 
 ## Journals, overflow, and metrics
 
 Journal capacity is fixed. Overwrite behavior discards the oldest replaceable observation when full. Reject-newest behavior preserves the committed state but rejects journal admission and increments `PulseStore.rejectedJournalChangeCount`. Neither policy silently turns a lossless event into a best-effort state update.
 
-Treat journal utilization, overwrite counts, rejected admissions, raw input
-count, committed record count, and UI delivery count as distinct operational
-signals. The Flutter telemetry example is designed to make their relationship
+Treat journal utilization, overwrite counts, rejected admissions,
+per-subscription delivery metrics, raw input count, committed record count, and
+UI delivery count as distinct operational signals. The Flutter telemetry example is designed to make their relationship
 visible at high configured input rates. Its default journal mode samples and
 clears every 250 ms, so stable utilization represents a recent observation
 window rather than accumulated backlog. Its retained pressure modes use a small
