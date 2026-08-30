@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Added opt-in versioned committed-record capture, checkpoints, and ordered
+  replay contracts, while leaving the default store on its in-memory path.
 - Documented the bounded `immediate`, `latest`, and `batched` state-delivery
   contract, including reentrancy, flush, and lifecycle behavior.
 - Added allocation-free per-subscription `pendingDeliveries`, `deliveredCount`,

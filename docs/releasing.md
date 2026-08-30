@@ -19,16 +19,21 @@ flowchart LR
   Coverage --> Snapshot[publish artifact]
   Snapshot --> Tags[Create version tags]
   Tags --> CoreTag[pulse_slab-vX.Y.Z]
+  Tags --> PersistenceTag[pulse_slab_persistence_io-vX.Y.Z]
   Tags --> GeneratorTag[pulse_slab_generator-vX.Y.Z]
   Tags --> FlutterTag[pulse_slab_flutter-vX.Y.Z]
   CoreTag --> CorePublish[Publish pulse_slab]
+  PersistenceTag --> Wait[Wait for required core version]
   GeneratorTag --> Wait[Wait for required core version]
   FlutterTag --> Wait[Wait for required core version]
   CorePublish --> PubDev[pub.dev]
   CorePublish --> CoreRelease[Create pulse_slab GitHub Release]
   CorePublish --> Wait
+  Wait --> PersistencePublish[Publish pulse_slab_persistence_io]
   Wait --> GeneratorPublish[Publish pulse_slab_generator]
   Wait --> FlutterPublish[Publish pulse_slab_flutter]
+  PersistencePublish --> PubDev
+  PersistencePublish --> PersistenceRelease[Create pulse_slab_persistence_io GitHub Release]
   GeneratorPublish --> PubDev
   GeneratorPublish --> GeneratorRelease[Create pulse_slab_generator GitHub Release]
   FlutterPublish --> PubDev
@@ -41,26 +46,28 @@ flowchart LR
 manual dispatches. It runs in this order:
 
 1. Core VM unit and integration tests, including the browser portability test.
-2. Generator formatting, analysis, generated-source freshness, unit and
+2. Native persistence VM unit and integration tests.
+3. Generator formatting, analysis, generated-source freshness, unit and
    generated-source tests, and its complete runnable example.
-3. Flutter adapter unit and widget tests.
-4. Flutter telemetry example integration tests.
-5. LCOV collection for the core and Flutter adapter.
-6. A compact Markdown coverage table added to the GitHub Actions job summary,
+4. Flutter adapter unit and widget tests.
+5. Flutter telemetry example integration tests.
+6. LCOV collection for the core, native persistence, and Flutter adapter.
+7. A compact Markdown coverage table added to the GitHub Actions job summary,
    plus the raw reports as a workflow artifact.
-7. Creation and upload of `publish/`, an isolated workspace containing the
-   three publishable packages: `packages/pulse_slab`,
-   `packages/pulse_slab_generator`, and `packages/pulse_slab_flutter`.
+8. Creation and upload of `publish/`, an isolated workspace containing the
+   four publishable packages: `packages/pulse_slab`,
+   `packages/pulse_slab_persistence_io`, `packages/pulse_slab_generator`, and
+   `packages/pulse_slab_flutter`.
 
-The summary table contains line coverage for the core and Flutter adapter plus
-their combined total. It also includes branch columns when the underlying LCOV
-report supplies branch records; Dart and Flutter test coverage commonly reports
-those values as `N/A`. Coverage is a measurement and review signal; this
-workflow does not enforce an arbitrary percentage threshold.
+The summary table contains line coverage for the core, native persistence, and
+Flutter adapter plus their combined total. It also includes branch columns when
+the underlying LCOV report supplies branch records; Dart and Flutter test
+coverage commonly reports those values as `N/A`. Coverage is a measurement and
+review signal; this workflow does not enforce an arbitrary percentage threshold.
 
 The generator archive retains its compact runnable example so pub.dev can
-display the complete declared-schema workflow. Core and Flutter examples stay
-out of their publication archives.
+display the complete declared-schema workflow. Core, native persistence, and
+Flutter examples stay out of their publication archives.
 
 ## Publication snapshot
 
@@ -83,18 +90,19 @@ publish/
 |-- pubspec.yaml
 `-- packages/
     |-- pulse_slab/
+    |-- pulse_slab_persistence_io/
     |-- pulse_slab_generator/
     `-- pulse_slab_flutter/
 ~~~
 
-The generator example is retained; core and Flutter example directories are
-excluded. The snapshot is a reviewable, independently resolvable package
-workspace. It is not committed. CI copies it to the runner's temporary
-directory before resolving dependencies, validating the archives, or
+The generator example is retained; core, native persistence, and Flutter
+example directories are excluded. The snapshot is a reviewable, independently
+resolvable package workspace. It is not committed. CI copies it to the runner's
+temporary directory before resolving dependencies, validating the archives, or
 publishing. That detached copy has no Git checkout as an ancestor, so Pub
-validates the exact staged files without being affected by a working-tree
-status check. The source package `.pubignore` files remain a second safeguard
-for files that must stay out of the actual pub.dev archives.
+validates the exact staged files without being affected by a working-tree status
+check. The source package `.pubignore` files remain a second safeguard for files
+that must stay out of the actual pub.dev archives.
 
 For a local archive check, copy the generated snapshot outside the repository
 before running Pub:
@@ -107,6 +115,9 @@ Push-Location $publishWorkspace
 flutter pub get
 Push-Location packages/pulse_slab
 flutter pub publish --dry-run
+Pop-Location
+Push-Location packages/pulse_slab_persistence_io
+dart pub publish --dry-run
 Pop-Location
 Push-Location packages/pulse_slab_flutter
 flutter pub publish --dry-run
@@ -126,34 +137,37 @@ dart tools/prepare_publish_packages.dart --clean
 
 ## Release rule
 
-A verified push to `main` that changes a publishable package directory must
-contain at least one new package version. The `release_tags` job checks
-the matching package changelog heading and creates a tag only when it does not
-already exist:
+A verified push to `main` creates a release tag only for an existing publishable
+package whose `pubspec.yaml` version changed relative to the previous `main`
+revision. The `release_tags` job checks the matching package changelog heading
+and creates a tag only when it does not already exist:
 
 | Package | Release tag |
 | --- | --- |
 | `pulse_slab` | `pulse_slab-v<version>` |
+| `pulse_slab_persistence_io` | `pulse_slab_persistence_io-v<version>` |
 | `pulse_slab_generator` | `pulse_slab_generator-v<version>` |
 | `pulse_slab_flutter` | `pulse_slab_flutter-v<version>` |
 
 This supports an independent patch release of each package. If several versions
 change together, all matching tags are created. Re-running a release after a
 partial success is safe: existing tags are left unchanged and only missing tags
-are created. A merge to `main` that changes a package but has no new package
-version fails the release-tag job rather than silently creating a non-versioned
-release. A maintenance-only merge that does not change a package directory
-succeeds without creating tags or publishing packages.
+are created. A package-source change without a package-version change, a
+maintenance-only merge, and the initial addition of a package all succeed
+without creating tags or publishing packages. A new package is released by a
+later, explicit package-version change after its required pub.dev bootstrap is
+complete.
 
 If repository rules limit the number of refs that a push can update, allow at
-least three tag updates: a coordinated release can create the core, generator,
-and Flutter tags in one push.
+least four tag updates: a coordinated release can create the core, native
+persistence, generator, and Flutter tags in one push.
 
 The existing repository-wide `0.1.0-alpha` tag is a legacy tag. It is preserved
 unchanged, does not match any package publishing trigger, and does not count as
 `pulse_slab-v0.1.0-alpha`, `pulse_slab_generator-v0.1.0-alpha`, or
-`pulse_slab_flutter-v0.1.0-alpha`. The release job emits a notice when it
-encounters a legacy tag with the same version and continues with the
+`pulse_slab_flutter-v0.1.0-alpha`, or
+`pulse_slab_persistence_io-v0.1.0-alpha`. The release job emits a notice when
+it encounters a legacy tag with the same version and continues with the
 package-specific tag namespace.
 
 ## GitHub Releases
@@ -178,7 +192,7 @@ package releases** workflow from `main`. Provide one or more comma- or
 whitespace-separated package tags, for example:
 
 ~~~text
-pulse_slab-v0.3.0-beta.1,pulse_slab_generator-v0.3.0-beta.1,pulse_slab_flutter-v0.3.0-beta.1
+pulse_slab-v<version>,pulse_slab_persistence_io-v<version>,pulse_slab_generator-v<version>,pulse_slab_flutter-v<version>
 ~~~
 
 The backfill workflow validates that each tag exists, creates only missing
@@ -189,30 +203,37 @@ GitHub Releases, and never calls pub.dev.
 Package versions on pub.dev are immutable. The initial manual publications
 created pub.dev package records for `pulse_slab` and
 `pulse_slab_generator`; trusted publishing then published the matching
-`pulse_slab_flutter` `0.3.0-beta.1` artifact. All three `0.3.0-beta.1`
-package tags and GitHub prereleases now exist. A generator-only correction is
-therefore prepared independently as `pulse_slab_generator 0.3.0-beta.2`, while
-its hosted dependency remains `pulse_slab ^0.3.0-beta.1`. Versions with a
-prerelease suffix, such as `0.3.0-beta.1`, create GitHub pre-releases. A
-version without one, such as `1.0.0`, creates a regular GitHub Release.
+`pulse_slab_flutter` `0.3.0-beta.1` artifact. The native persistence package
+uses the same bootstrap and trusted-publishing process before its first
+automated release. A generator-only correction is therefore prepared
+independently as `pulse_slab_generator 0.3.0-beta.2`, while its hosted
+dependency remains `pulse_slab ^0.3.0-beta.1`. Versions with a prerelease
+suffix, such as `0.3.0-beta.1`, create GitHub pre-releases. A version without
+one, such as `1.0.0`, creates a regular GitHub Release.
 
 The first stable public release is planned as `1.0.0`, without a `-beta`
 suffix. Once that version is released, it is immutable on pub.dev. Later
 prerelease work, if needed, must use a subsequent version rather than changing
 the `1.0.0` release.
 
-The Flutter adapter and generator have normal hosted dependencies on
-`pulse_slab`. Before publishing either tag, the workflow waits for the exact
-lower-bound core version in its caret dependency constraint, including a
-semantic prerelease suffix when present, to appear on pub.dev. This makes
-same-merge releases reliable without pretending that pub.dev publication is
-instantly visible.
+The native persistence package, Flutter adapter, and generator have normal
+hosted dependencies on `pulse_slab`. Before publishing any of their tags, the
+workflow waits for the exact lower-bound core version in its caret dependency
+constraint, including a semantic prerelease suffix when present, to appear on
+pub.dev. This makes same-merge releases reliable without pretending that pub.dev
+publication is instantly visible.
+
+The first `pulse_slab_persistence_io` release must be coordinated with a core
+release that exports the persistence contracts it imports. Its
+`pulse_slab` lower-bound constraint must name that core release before either
+package is tagged; workspace resolution alone is not a substitute for this
+hosted-package check.
 
 ## One-time maintainer setup
 
 The workflow files require this setup before the first automated release of a
-new package. It is complete for the three current packages; retain these steps
-when adding another publishable package or restoring the release environment:
+new package. Retain these steps when adding a publishable package or restoring
+the release environment:
 
 1. Publish the first version of each package manually from its source package
    directory. Pub.dev trusted publishing can automate later releases of an
@@ -223,17 +244,19 @@ when adding another publishable package or restoring the release environment:
    | Package | Authorized tag pattern |
    | --- | --- |
    | `pulse_slab` | `pulse_slab-v{{version}}` |
+   | `pulse_slab_persistence_io` | `pulse_slab_persistence_io-v{{version}}` |
    | `pulse_slab_generator` | `pulse_slab_generator-v{{version}}` |
    | `pulse_slab_flutter` | `pulse_slab_flutter-v{{version}}` |
 
-   Also require the GitHub Actions environment named `pub-dev` for all three
+   Also require the GitHub Actions environment named `pub-dev` for all four
    packages so pub.dev verifies the protected deployment identity.
 
 3. Create the protected GitHub environment named `pub-dev`. If deployment
    branches and tags are restricted, allow the `main` branch for release-tag
-   creation and all three tag patterns for publication:
-   `pulse_slab-v*`, `pulse_slab_generator-v*`, and `pulse_slab_flutter-v*`.
-   If repository rules also limit ref updates per push, allow at least three
+   creation and all four tag patterns for publication:
+   `pulse_slab-v*`, `pulse_slab_persistence_io-v*`,
+   `pulse_slab_generator-v*`, and `pulse_slab_flutter-v*`.
+   If repository rules also limit ref updates per push, allow at least four
    updates for a coordinated package release. Add required reviewers if release
    approval is desired.
 4. Add `RELEASE_TAG_TOKEN` as an environment secret in `pub-dev`. It must be a
@@ -245,11 +268,11 @@ when adding another publishable package or restoring the release environment:
    short-lived credential used by pub.dev trusted publishing; no long-lived
    pub.dev token is stored in GitHub.
 
-The `0.3.0-beta.1` release is complete for all three packages. Before merging
-any later release to `main`, confirm that the GitHub `pub-dev` environment and
-each package's trusted publisher use the tag patterns above. The release
-workflow performs a dry-run before every upload, so invalid metadata or
-unexpected archive contents stop the release before publication.
+The `0.3.0-beta.1` release is complete for the three existing published
+packages. Before merging a release to `main`, confirm that the GitHub `pub-dev`
+environment and each package's trusted publisher use the tag patterns above.
+The release workflow performs a dry-run before every upload, so invalid metadata
+or unexpected archive contents stop the release before publication.
 
 ## Local release checks
 
@@ -266,6 +289,15 @@ dart test -p chrome test/web_portability_test.dart
 dart test --coverage=coverage
 dart run coverage:format_coverage --lcov --in=coverage --out=coverage/lcov.info --package=. --report-on=lib
 flutter pub publish --dry-run
+Pop-Location
+
+Push-Location packages/pulse_slab_persistence_io
+dart format --output=none --set-exit-if-changed lib test
+dart analyze
+dart test
+dart test --coverage=coverage
+dart run coverage:format_coverage --lcov --in=coverage --out=coverage/lcov.info --package=. --report-on=lib
+dart pub publish --dry-run
 Pop-Location
 
 Push-Location packages/pulse_slab_generator
@@ -296,6 +328,7 @@ Pop-Location
 
 dart run tools/coverage_summary.dart `
   --input pulse_slab=packages/pulse_slab/coverage/lcov.info `
+  --input pulse_slab_persistence_io=packages/pulse_slab_persistence_io/coverage/lcov.info `
   --input pulse_slab_flutter=packages/pulse_slab_flutter/coverage/lcov.info `
   --output coverage/summary.md
 

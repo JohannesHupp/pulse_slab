@@ -139,4 +139,39 @@ void main() {
       );
     }
   });
+
+  test('round-trips a persistence capture without native APIs', () {
+    final StoreCaptureRecordId record = StoreCaptureRecordId(
+      segment: 12,
+      slot: 34,
+      generation: 56,
+    );
+    final StoreCaptureBatch batch = StoreCaptureBatch.incremental(
+      <StoreCaptureOperation>[
+        StoreCaptureSnapshot(
+          record: record,
+          layout: StorePersistenceLayout(
+            identity: 'web-sensor',
+            version: 2,
+          ),
+          version: 0x100000001,
+          bytes: Uint8List.fromList(<int>[1, 2, 3, 4]),
+        ),
+        StoreCaptureRelease(record: record),
+      ],
+    );
+
+    final StoreCaptureBatch decoded = StoreCaptureCodec.decode(batch.encode());
+
+    expect(decoded.kind, StoreCaptureBatchKind.incremental);
+    expect(decoded.operations, hasLength(2));
+    final StoreCaptureSnapshot snapshot =
+        decoded.operations.first as StoreCaptureSnapshot;
+    expect(snapshot.record, record);
+    expect(snapshot.layout.identity, 'web-sensor');
+    expect(snapshot.layout.version, 2);
+    expect(snapshot.version, 0x100000001);
+    expect(snapshot.copyBytes(), orderedEquals(<int>[1, 2, 3, 4]));
+    expect(decoded.operations.last, isA<StoreCaptureRelease>());
+  });
 }

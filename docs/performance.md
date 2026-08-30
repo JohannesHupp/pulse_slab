@@ -24,6 +24,24 @@ store is disposed. This trades a predictable high-water allocation for steady
 state reuse; isolate unusually large bulk transactions in a short-lived store
 when retaining that capacity would be undesirable.
 
+## Optional persistent capture
+
+Persistence is disabled unless a `PulseStorePersistence` backend is supplied.
+In the disabled configuration, field writes do not perform persistence work and
+a completed transaction performs only the backend-null guard. It does not
+allocate capture batches, copy record bytes, encode values, create a queue,
+start a worker, or perform I/O.
+
+An enabled store copies each changed record's final bytes once at its completed
+transaction boundary and groups those snapshots in one capture batch. The
+backend then owns encoding, retention, and I/O. Record allocation and release
+also capture lifecycle operations. An explicit checkpoint copies every live
+record, so size `maxPendingBytes` to admit the largest checkpoint as well as
+normal incremental batches. For the native file backend, also size
+`maxJournalBytes` for retained framed segments and `maxSegmentBytes` for the
+largest encoded capture plus its binary headers. Measure enabled capture
+separately from the in-memory baseline on the deployment device.
+
 ## Compact and wide field selection
 
 For layouts with at most 31 fields, `FieldMask` remains the original integer
@@ -97,7 +115,8 @@ dart run benchmark/pulse_slab_benchmark.dart
 ```
 
 The suite covers sequential typed writes, portable unsigned 64-bit field
-read/write, random record updates, transaction throughput, unfiltered dispatch,
+read/write, persistence capture admission without file I/O, random record
+updates, transaction throughput, unfiltered dispatch,
 compact field-filtered dispatch, a 63-field wide-selection dispatch,
 frame-style coalescing, slot reuse, an object-model baseline, and a small
 notifier-style baseline. The wide workload selects fields across all three

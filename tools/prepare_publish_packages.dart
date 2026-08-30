@@ -1,6 +1,6 @@
 import 'dart:io';
 
-/// Creates an isolated Pub workspace for the three publishable packages.
+/// Creates an isolated Pub workspace for the four publishable packages.
 ///
 /// The staged workspace excludes examples by default, while retaining the
 /// generator's compact runnable example for its pub.dev package. It is safe to
@@ -62,6 +62,11 @@ const List<_PackageDefinition> _packages = <_PackageDefinition>[
     name: 'pulse_slab',
     sourcePath: 'packages/pulse_slab',
     stagingPath: 'packages/pulse_slab',
+  ),
+  _PackageDefinition(
+    name: 'pulse_slab_persistence_io',
+    sourcePath: 'packages/pulse_slab_persistence_io',
+    stagingPath: 'packages/pulse_slab_persistence_io',
   ),
   _PackageDefinition(
     name: 'pulse_slab_generator',
@@ -406,6 +411,7 @@ environment:
 
 workspace:
   - packages/pulse_slab
+  - packages/pulse_slab_persistence_io
   - packages/pulse_slab_generator
   - packages/pulse_slab_flutter
 ''');

@@ -1,6 +1,13 @@
 # Architecture
 
-`pulse_slab` is organized as a data plane and an optional Flutter UI plane. The pure Dart core owns layouts, memory, transactions, record lifetime, journals, subscriptions, and byte-batch workers. The Flutter adapter observes committed core state and schedules UI-facing notifications; it does not own or mutate the store outside normal core transactions.
+`pulse_slab` is organized as a data plane, an optional persistent capture plane,
+and an optional Flutter UI plane. The pure Dart core owns layouts, memory,
+transactions, record lifetime, journals, subscriptions, byte-batch workers, and
+portable persistence contracts. The Flutter adapter observes committed core
+state and schedules UI-facing notifications; it does not own or mutate the
+store outside normal core transactions. The native persistence package receives
+immutable capture bytes after a completed store boundary and owns file I/O and
+replay.
 
 ## Package boundary
 
@@ -22,6 +29,21 @@ The core package has no Flutter SDK dependency. A Flutter application can depend
 The repository uses a Pub workspace for development. It resolves the local
 versioned packages as one dependency graph; the published packages retain their
 normal hosted dependency boundary.
+
+## Persistent capture plane
+
+`PulseStore` accepts an optional `PulseStorePersistence` backend. The core
+creates a full-record capture only after it has computed a transaction's net
+changes. Capture admission runs before record versions, `ChangeJournal`, and
+subscription delivery are advanced. A rejected admission restores the
+transaction; accepted capture is not a filesystem durability barrier.
+
+The capture plane is separate from the journal and UI delivery plane. Core
+captures use the versioned `StoreCaptureCodec` format, which includes raw
+record bytes, record coordinates, layout identity/version, snapshots, and
+release operations. `pulse_slab_persistence_io` receives only immutable encoded
+bytes and owns native file I/O, ordered replay, and acknowledgement progress.
+The complete contract is in [Persistent capture and replay](persistence.md).
 
 ## Data plane and UI plane
 
@@ -47,6 +69,7 @@ sequenceDiagram
   participant P as Producer
   participant T as Transaction
   participant S as Core store
+  participant P as Persistence backend
   participant J as Change journal
   participant D as Delivery policy
   participant C as Consumer
@@ -54,6 +77,7 @@ sequenceDiagram
   P->>T: set typed fields
   T->>T: compare final bytes and merge dirty masks
   T->>S: commit changed records
+  S->>P: admit immutable capture batch when configured
   S->>S: increment each changed record version once
   S->>J: append or account for compact change record
   J->>D: deliver or coalesce selected fields

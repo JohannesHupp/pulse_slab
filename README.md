@@ -8,11 +8,12 @@ layouts use a portable, layout-scoped `FieldSelection`. See the core
 [field-selection guide](packages/pulse_slab/README.md#field-selection-for-wide-layouts)
 for the API and migration details.
 
-The package family contains three independently publishable packages:
+The package family contains four independently publishable packages:
 
 | Component | Purpose | Distribution |
 | --- | --- | --- |
-| [`pulse_slab`](packages/pulse_slab) | Pure Dart data plane: layouts, typed memory, handles, transactions, journals, subscriptions, and byte-batch workers. | pub.dev |
+| [`pulse_slab`](packages/pulse_slab) | Pure Dart data plane: layouts, typed memory, handles, transactions, journals, subscriptions, byte-batch workers, and persistence contracts. | pub.dev |
+| [`pulse_slab_persistence_io`](packages/pulse_slab_persistence_io) | Optional native file-persistence backend for committed store captures and replay. | pub.dev |
 | [`pulse_slab_generator`](packages/pulse_slab_generator) | Optional `build_runner` companion for typed layouts, serialization, and validation source. | pub.dev development dependency |
 | [`pulse_slab_flutter`](packages/pulse_slab_flutter) | Flutter UI adapter: frame-coalesced listenables and field-filtered widgets. It re-exports the core API. | pub.dev |
 
@@ -25,11 +26,15 @@ in an application's `dev_dependencies`; it does not become a runtime
 dependency. Its [README](packages/pulse_slab_generator/README.md) shows the
 hosted installation and local development workflow.
 
-The repository is a Dart Pub workspace. It resolves the local core, generator,
-and Flutter adapter together during development. Workspace development requires
-Dart 3.9 or later because of the generator's analyzer/source_gen dependencies.
-The standalone `pulse_slab` runtime package remains compatible with Dart 3.6
-or later.
+Applications that need file-backed capture and replay opt into
+`pulse_slab_persistence_io`. The package is available on native Dart and
+Flutter platforms; the browser-safe core API has no `dart:io` dependency.
+
+The repository is a Dart Pub workspace. It resolves the local core, native
+persistence backend, generator, and Flutter adapter together during
+development. Workspace development requires Dart 3.9 or later because of the
+generator's analyzer/source_gen dependencies. The standalone `pulse_slab`
+runtime package remains compatible with Dart 3.6 or later.
 
 ## Name rationale
 
@@ -56,6 +61,7 @@ or later.
 |-- docs/                         # Design, performance, and ownership notes
 |-- packages/
 |   |-- pulse_slab/               # Pure Dart, independently publishable core
+|   |-- pulse_slab_persistence_io/  # Optional native file-persistence backend
 |   |-- pulse_slab_generator/     # Optional typed-layout code generator
 |   `-- pulse_slab_flutter/       # Flutter adapter and telemetry example
 |       `-- example/              # Independently runnable Flutter application
@@ -63,33 +69,37 @@ or later.
 `-- tools/                        # Repository maintenance tooling
 ```
 
-See the core [README](packages/pulse_slab/README.md), the
-[generator README](packages/pulse_slab_generator/README.md), the Flutter
-adapter [README](packages/pulse_slab_flutter/README.md), and the [design
+See the core [README](packages/pulse_slab/README.md), [native persistence
+README](packages/pulse_slab_persistence_io/README.md), [generator
+README](packages/pulse_slab_generator/README.md), the Flutter adapter
+[README](packages/pulse_slab_flutter/README.md), and the [design
 documentation](docs/architecture.md).
 
 ## Release automation
 
-Every push and pull request runs core, generator, Flutter adapter, and
-telemetry-example tests before coverage collection and publication validation.
-Generator verification includes a checked-in generated-source freshness check
-and its runnable example. The GitHub Actions summary includes a compact core
-and Flutter-adapter coverage table, and the workflow uploads an isolated
-`publish/` artifact containing all three pub.dev packages. The generator's
-compact, runnable Dart example is retained in its archive; the core and Flutter
-examples remain excluded.
+Every push and pull request runs core, native persistence, generator, Flutter
+adapter, and telemetry-example tests before coverage collection and publication
+validation. Generator verification includes a checked-in generated-source
+freshness check and its runnable example. The GitHub Actions summary includes a
+compact core, native-persistence, and Flutter-adapter coverage table, and the
+workflow uploads an isolated `publish/` artifact containing all four pub.dev
+packages. The generator's compact, runnable Dart example is retained in its
+archive; the core, native persistence, and Flutter examples remain excluded.
 
-A verified push to `main` is a release for a publishable package: it creates
-versioned package tags and publishes the corresponding package to pub.dev
-through GitHub OIDC trusted publishing. The core is published first; the
-Flutter adapter and generator wait for their required core version to become
-visible before publishing.
+A verified push to `main` creates versioned package tags only for existing
+publishable packages whose package version changed in that push. Those tags
+publish the corresponding package to pub.dev through GitHub OIDC trusted
+publishing. The core is published first; the native persistence backend, Flutter
+adapter, and generator wait for their required core version to become visible
+before publishing. Regular feature changes and the initial addition of a new
+package do not create a tag or publish a package.
 
 The first release of a new package requires the one-time pub.dev bootstrap and
 GitHub environment configuration described in [Release
-automation](docs/releasing.md). The three package records already exist on
-pub.dev; before a release, maintainers still confirm the trusted-publisher and
-GitHub environment settings. They then release by updating the relevant package
+automation](docs/releasing.md). The existing package records already exist on
+pub.dev; each new package requires the same bootstrap before its first release.
+Before a release, maintainers confirm the trusted-publisher and GitHub
+environment settings. They then release by updating the relevant package
 version and changelog, then merging the release change to `main`. The telemetry
 application remains a repository component and is never published.
 
@@ -113,6 +123,13 @@ dart format --output=none --set-exit-if-changed .
 dart analyze
 dart test
 dart test -p chrome test/web_portability_test.dart
+dart pub publish --dry-run
+
+# Optional native file-persistence backend
+cd ../pulse_slab_persistence_io
+dart format --output=none --set-exit-if-changed lib test
+dart analyze
+dart test
 dart pub publish --dry-run
 
 # Optional build-time generator
