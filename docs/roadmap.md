@@ -33,7 +33,7 @@ Potential future work includes:
 - Double buffering for producer and consumer pipelines.
 - SIMD-specialized bulk operations where they are measurable and portable.
 - Carefully specified multi-writer support.
-- Additional delivery policies and per-subscriber backpressure instrumentation.
+- Additional delivery policies.
 - Optional Riverpod and Bloc adapters as external packages, not core dependencies.
 - Persistent journal adapters for acknowledged lossless domain events.
 - More detailed allocation, latency, and memory telemetry in benchmark tooling.

@@ -13,6 +13,9 @@ compatible `pulse_slab` versions, while the manual runtime API stays build-free.
 
 ## Unreleased
 
+- Documented bounded state-delivery semantics and added allocation-free
+  per-subscription delivery diagnostics for the core package.
+
 ## 0.3.0-beta.2 (`pulse_slab_generator`)
 
 - Restored compatibility with the current analyzer element API used by pub.dev

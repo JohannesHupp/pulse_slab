@@ -90,9 +90,20 @@ Implementation details stay under each package's `lib/src` directory. The core p
 
 ## Delivery and lifecycle boundaries
 
+- The complete capacity, ordering, overflow, flush, reentrancy, and
+  per-subscription metric contract is in
+  [Delivery policies](delivery_policies.md).
 - Record subscriptions are stored per handle, so dispatch does not scan a global listener collection.
 - Matching callbacks run in registration order after state has committed. Removing a subscription during dispatch is safe; inactive subscriptions are skipped.
-- Immediate listener calls created by a reentrant commit wait until the active traversal finishes. The fixed `maxReentrantImmediateDeliveries` ring retains synchronous state commits and replaces its oldest pending delivery when full, incrementing `droppedReentrantImmediateDeliveryCount`. Reentrant latest and batched subscriptions enter their own policy queues immediately.
+- A commit made while immediate dispatch is active queues matching immediate
+  calls until that traversal finishes. The fixed
+  `maxReentrantImmediateDeliveries` ring retains pending listener deliveries
+  from synchronous state commits and replaces its oldest pending delivery when
+  full, incrementing
+  `droppedReentrantImmediateDeliveryCount`. A commit from a latest or batched
+  flush callback invokes matching immediate listeners inline; it does not use
+  the reentrant ring. During an active immediate traversal, latest and batched
+  subscriptions enter their own policy queues immediately.
 - A callback may release a record or dispose the store. Later callbacks only run while their target and store remain active.
 - Listener failures do not roll back an already committed transaction or stop other eligible callbacks in the same traversal. After the outermost dispatch, the first listener failure is rethrown with its original stack trace.
 - Record listeners and lifecycle invalidation callbacks are synchronous APIs. Their returned futures are not awaited or routed through listener failure handling.

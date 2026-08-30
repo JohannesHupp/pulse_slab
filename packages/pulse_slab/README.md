@@ -262,28 +262,37 @@ for new portable identifiers, counters, and unsigned values.
 
 | Policy | Behavior | Queue bound |
 | --- | --- | --- |
-| `immediate` | Calls matching listeners immediately after a successful commit. | No normal queue; reentrant listener calls use a fixed replaceable queue. |
+| `immediate` | Calls matching listeners immediately after a successful commit. | No normal queue; immediate calls reentered during active immediate dispatch use a fixed replaceable queue. |
 | `latest` | Keeps only the latest merged state change per subscription until `flush()`. | One pending change per subscription. |
-| `batched` | Retains bounded state changes until `flush()`. | Fixed journal and subscription bounds. |
+| `batched` | Retains matching state changes in arrival order until `flush()`. | Fixed store-wide delivery ring; a full ring replaces its oldest pending delivery. |
 
 Subscriptions are scoped to one handle and may filter by a compact field mask or
 a wide `FieldSelection`. Dispatch order is registration order. Removing a
 subscription during dispatch is safe; a removed listener will not be invoked
 later in the same dispatch. A listener may start a new transaction after the
-original commit. A reentrant immediate change commits synchronously but its
-immediate listener calls wait until the active traversal finishes. The fixed
-`maxReentrantImmediateDeliveries` queue replaces its oldest pending state
-delivery when full and increments `droppedReentrantImmediateDeliveryCount`; it
-never rejects a committed write. Reentrant `latest` and `batched`
-subscriptions are routed into their own bounded policy queues immediately, so
-their coalescing semantics are preserved. Latest and batched delivery retain
-changes until the next explicit flush. `flush()` rejects reentrant calls from a
-latest or batched delivery callback. Prefer deferring feedback loops when a
-flat callback sequence is easier to reason about.
+original commit. If immediate dispatch is already active, matching immediate
+calls wait in the fixed `maxReentrantImmediateDeliveries` queue until that
+traversal finishes. A full queue replaces its oldest pending state delivery and
+increments `droppedReentrantImmediateDeliveryCount`; it never rejects a
+committed write. An update from a latest or batched flush callback invokes its
+matching immediate listeners inline instead. During an active immediate
+traversal, reentrant `latest` and `batched` subscriptions enter their own
+bounded policy queues immediately, so their coalescing semantics are preserved.
+`flush()` rejects reentrant calls from a latest or batched delivery callback.
 
 If a queued reentrant immediate listener fails, the first failure is rethrown
 when the outermost delivery traversal completes. It never rolls back either
 already committed state change.
+
+Each `StoreSubscription` exposes allocation-free scalar metrics for its own
+delivery work: `pendingDeliveries`, `deliveredCount`, `coalescedCount`, and
+`droppedCount`. `pendingDeliveries` is a current gauge; the remaining values
+are cumulative. Latest replacement increments `coalescedCount`, while
+`droppedCount` only records an explicit eviction from a full batched or
+reentrant-immediate delivery ring. Journal overwrite and rejection metrics are
+separate from subscription delivery metrics. The complete ordering, capacity,
+flush, reentrancy, and metric contract is in the repository's
+[delivery policies](https://github.com/JohannesHupp/pulse_slab/blob/main/docs/delivery_policies.md).
 
 Transaction and `update` actions must be synchronous; a returned `Future` is
 rejected and the synchronous prefix is rolled back. Record listeners and
