@@ -79,14 +79,6 @@ final class SlabLayoutGenerator extends GeneratorForAnnotation<SlabRecord> {
         element: recordClass,
       );
     }
-    if (fields.length > maxFieldsPerLayout) {
-      _invalid(
-        'Generated record "$className" declares ${fields.length} fields, but '
-        'Pulse Slab supports at most $maxFieldsPerLayout.',
-        element: recordClass,
-      );
-    }
-
     _validateGeneratedMemberNames(className, fields, recordClass);
     final _LayoutMetadata metadata = _precomputeLayout(
       recordClass: recordClass,
@@ -312,8 +304,11 @@ final class SlabLayoutGenerator extends GeneratorForAnnotation<SlabRecord> {
           element: field.element,
         );
       }
+      field.index = index;
       field.offset = offset;
-      field.mask = 1 << index;
+      if (fields.length <= maxFieldsPerLayout) {
+        field.compactMask = 1 << index;
+      }
       cursor = offset + field.byteLength;
       if (fieldAlignment > maximumFieldAlignment) {
         maximumFieldAlignment = fieldAlignment;
@@ -421,6 +416,7 @@ final class SlabLayoutGenerator extends GeneratorForAnnotation<SlabRecord> {
   }) {
     final String layoutClassName = '${className}Layout';
     final String schemaClassName = '_${className}LayoutSchema';
+    final bool usesCompactMasks = fields.length <= maxFieldsPerLayout;
     final StringBuffer output = StringBuffer()
       ..writeln('/// Generated Pulse Slab schema for [$className].')
       ..writeln('abstract final class $layoutClassName {')
@@ -430,16 +426,30 @@ final class SlabLayoutGenerator extends GeneratorForAnnotation<SlabRecord> {
       ..writeln('  static const int alignment = ${metadata.alignment};')
       ..writeln()
       ..writeln('  /// Precomputed record size including trailing padding.')
-      ..writeln('  static const int sizeInBytes = ${metadata.sizeInBytes};')
-      ..writeln()
-      ..writeln('  /// Union of every generated field mask.')
-      ..writeln('  static const int allFieldsMask = ${_allFieldsMask(fields)};')
+      ..writeln('  static const int sizeInBytes = ${metadata.sizeInBytes};');
+
+    if (usesCompactMasks) {
+      output
+        ..writeln()
+        ..writeln('  /// Union of every generated field mask.')
+        ..writeln(
+          '  static const int allFieldsMask = ${_allFieldsMask(fields)};',
+        );
+    }
+
+    output
       ..writeln()
       ..writeln('  /// Stable generated record layout.')
       ..writeln('  static RecordLayout get layout => _schema.layout;')
       ..writeln()
       ..writeln('  /// Byte order selected for the generated layout.')
-      ..writeln('  static Endian get byteOrder => _schema.layout.byteOrder;');
+      ..writeln('  static Endian get byteOrder => _schema.layout.byteOrder;')
+      ..writeln()
+      ..writeln('  /// Exact selection containing every generated field.')
+      ..writeln(
+        '  static FieldSelection get allFieldsSelection => '
+        '_schema.allFieldsSelection;',
+      );
 
     for (final _GeneratedField field in fields) {
       output
@@ -447,13 +457,28 @@ final class SlabLayoutGenerator extends GeneratorForAnnotation<SlabRecord> {
         ..writeln('  /// Precomputed byte offset for [${field.name}].')
         ..writeln('  static const int ${field.name}Offset = ${field.offset};')
         ..writeln()
-        ..writeln('  /// Precomputed dirty mask for [${field.name}].')
-        ..writeln('  static const int ${field.name}Mask = ${field.mask};')
+        ..writeln('  /// Precomputed field index for [${field.name}].')
+        ..writeln('  static const int ${field.name}Index = ${field.index};');
+      if (usesCompactMasks) {
+        output
+          ..writeln()
+          ..writeln('  /// Precomputed dirty mask for [${field.name}].')
+          ..writeln(
+            '  static const int ${field.name}Mask = ${field.compactMask};',
+          );
+      }
+      output
         ..writeln()
         ..writeln('  /// Stable descriptor for [$className.${field.name}].')
         ..writeln(
           '  static ${field.encoding.descriptorType} get ${field.name} => '
           '_schema.${field.name};',
+        )
+        ..writeln()
+        ..writeln('  /// Exact selection for [${field.name}].')
+        ..writeln(
+          '  static FieldSelection get ${field.name}Selection => '
+          '_schema.${field.name}.selection;',
         );
     }
 
@@ -578,9 +603,17 @@ final class SlabLayoutGenerator extends GeneratorForAnnotation<SlabRecord> {
           '$layoutClassName.${field.name}Offset ||',
         )
         ..writeln(
-          '        ${field.name}.mask != '
-          '$layoutClassName.${field.name}Mask) {',
-        )
+          '        ${field.name}.index != '
+          '$layoutClassName.${field.name}Index',
+        );
+      if (usesCompactMasks) {
+        output.writeln(
+          '        || ${field.name}.mask != '
+          '$layoutClassName.${field.name}Mask',
+        );
+      }
+      output
+        ..writeln('    ) {')
         ..writeln('      throw StateError(')
         ..writeln(
           "        'Generated metadata for $layoutName field \"${field.name}\" does not match the runtime layout.',",
@@ -589,6 +622,7 @@ final class SlabLayoutGenerator extends GeneratorForAnnotation<SlabRecord> {
         ..writeln('    }');
     }
     output
+      ..writeln('    allFieldsSelection = layout.selectionFor(layout.fields);')
       ..writeln('  }')
       ..writeln();
     for (final _GeneratedField field in fields) {
@@ -599,6 +633,7 @@ final class SlabLayoutGenerator extends GeneratorForAnnotation<SlabRecord> {
     output
       ..writeln()
       ..writeln('  late final RecordLayout layout;')
+      ..writeln('  late final FieldSelection allFieldsSelection;')
       ..writeln('}');
     return output.toString();
   }
@@ -637,6 +672,7 @@ final class SlabLayoutGenerator extends GeneratorForAnnotation<SlabRecord> {
     const Set<String> reserved = <String>{
       'alignment',
       'allFieldsMask',
+      'allFieldsSelection',
       '_schema',
       'allocate',
       'byteOrder',
@@ -653,8 +689,10 @@ final class SlabLayoutGenerator extends GeneratorForAnnotation<SlabRecord> {
     for (final _GeneratedField field in fields) {
       final List<String> names = <String>[
         field.name,
+        '${field.name}Index',
         '${field.name}Offset',
         '${field.name}Mask',
+        '${field.name}Selection',
       ];
       for (final String name in names) {
         if (!generatedNames.add(name)) {
@@ -783,6 +821,12 @@ const Map<String, _FieldEncoding> _encodings = <String, _FieldEncoding>{
     byteLength: 8,
     naturalAlignment: 8,
   ),
+  'uint64Value': _FieldEncoding(
+    descriptorType: 'Uint64ValueField',
+    dartType: 'Uint64Value',
+    byteLength: 8,
+    naturalAlignment: 8,
+  ),
   'float32': _FieldEncoding(
     descriptorType: 'Float32Field',
     dartType: 'double',
@@ -826,8 +870,9 @@ final class _GeneratedField {
   final int byteLength;
   final int? requestedAlignment;
   final int? requestedOffset;
+  late int index;
   late int offset;
-  late int mask;
+  int? compactMask;
 }
 
 final class _LayoutMetadata {
@@ -848,6 +893,10 @@ bool _matchesExpectedType(DartType type, _FieldEncoding encoding) {
     'Uint8List' =>
       type.element?.name == 'Uint8List' &&
           type.element?.library?.uri.toString() == 'dart:typed_data',
+    'Uint64Value' =>
+      type.element?.name == 'Uint64Value' &&
+          type.element?.library?.uri.toString() ==
+              'package:pulse_slab/src/layout.dart',
     _ => false,
   };
 }
@@ -880,7 +929,7 @@ bool _isValidAlignment(int value) {
 int _allFieldsMask(List<_GeneratedField> fields) {
   var mask = 0;
   for (final _GeneratedField field in fields) {
-    mask |= field.mask;
+    mask |= field.compactMask!;
   }
   return mask;
 }

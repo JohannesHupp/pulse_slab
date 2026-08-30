@@ -203,17 +203,20 @@ dart run build_runner build
 ```
 
 The generated `SensorStateLayout` provides stable typed descriptors,
-precomputed offsets, masks, and size metadata, plus a singleton `RecordLayout`,
-typed store reads and writes, and `serialize`, `deserialize`, `validate`, and
-`validateBytes` helpers. Its hot reads and writes use the generated descriptors
-and offsets directly, with no field-name lookup or runtime reflection.
-Supported declarations cover integer and floating-point scalar fields, `bool`,
-and fixed-length `Uint8List` fields; invalid declarations are reported by
-`build_runner`. Generated source is deterministic and may be checked in. See
-the [complete generated-layout example](https://pub.dev/packages/pulse_slab_generator/example)
-for the full workflow and API. Generated records use `final` fields and an unnamed
-generative constructor with matching `this.field` initializing formals, so a
-deserializer cannot transform an encoded value while rebuilding the object.
+precomputed offsets, indexes, and size metadata, plus compact masks for layouts
+through 31 fields or exact selections for wider layouts. It also provides a
+singleton `RecordLayout`, typed store reads and writes, and `serialize`,
+`deserialize`, `validate`, and `validateBytes` helpers. Its hot reads and
+writes use the generated descriptors and offsets directly, with no field-name
+lookup or runtime reflection. Supported declarations cover integer and
+floating-point scalar fields, `Uint64Value`, `bool`, and fixed-length
+`Uint8List` fields; invalid declarations are reported by `build_runner`.
+Generated source is deterministic and may be checked in. See the
+[complete generated-layout example](https://pub.dev/packages/pulse_slab_generator/example)
+for the full workflow and API. Generated records use `final` fields and an
+unnamed generative constructor with matching `this.field` initializing formals,
+so a deserializer cannot transform an encoded value while rebuilding the
+object.
 
 ## Portable unsigned 64-bit values
 

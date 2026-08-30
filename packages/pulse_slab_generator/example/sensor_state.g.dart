@@ -25,8 +25,14 @@ abstract final class SensorStateLayout {
   /// Byte order selected for the generated layout.
   static Endian get byteOrder => _schema.layout.byteOrder;
 
+  /// Exact selection containing every generated field.
+  static FieldSelection get allFieldsSelection => _schema.allFieldsSelection;
+
   /// Precomputed byte offset for [sequence].
   static const int sequenceOffset = 0;
+
+  /// Precomputed field index for [sequence].
+  static const int sequenceIndex = 0;
 
   /// Precomputed dirty mask for [sequence].
   static const int sequenceMask = 1;
@@ -34,8 +40,14 @@ abstract final class SensorStateLayout {
   /// Stable descriptor for [SensorState.sequence].
   static Uint32Field get sequence => _schema.sequence;
 
+  /// Exact selection for [sequence].
+  static FieldSelection get sequenceSelection => _schema.sequence.selection;
+
   /// Precomputed byte offset for [temperature].
   static const int temperatureOffset = 4;
+
+  /// Precomputed field index for [temperature].
+  static const int temperatureIndex = 1;
 
   /// Precomputed dirty mask for [temperature].
   static const int temperatureMask = 2;
@@ -43,8 +55,15 @@ abstract final class SensorStateLayout {
   /// Stable descriptor for [SensorState.temperature].
   static Float32Field get temperature => _schema.temperature;
 
+  /// Exact selection for [temperature].
+  static FieldSelection get temperatureSelection =>
+      _schema.temperature.selection;
+
   /// Precomputed byte offset for [active].
   static const int activeOffset = 8;
+
+  /// Precomputed field index for [active].
+  static const int activeIndex = 2;
 
   /// Precomputed dirty mask for [active].
   static const int activeMask = 4;
@@ -52,14 +71,23 @@ abstract final class SensorStateLayout {
   /// Stable descriptor for [SensorState.active].
   static BoolField get active => _schema.active;
 
+  /// Exact selection for [active].
+  static FieldSelection get activeSelection => _schema.active.selection;
+
   /// Precomputed byte offset for [identity].
   static const int identityOffset = 9;
+
+  /// Precomputed field index for [identity].
+  static const int identityIndex = 3;
 
   /// Precomputed dirty mask for [identity].
   static const int identityMask = 8;
 
   /// Stable descriptor for [SensorState.identity].
   static FixedBytesField get identity => _schema.identity;
+
+  /// Exact selection for [identity].
+  static FieldSelection get identitySelection => _schema.identity.selection;
 
   /// Allocates a record using [layout].
   static RecordHandle allocate(PulseStore store) => store.allocate(layout);
@@ -191,29 +219,34 @@ final class _SensorStateLayoutSchema {
       );
     }
     if (sequence.offset != SensorStateLayout.sequenceOffset ||
+        sequence.index != SensorStateLayout.sequenceIndex ||
         sequence.mask != SensorStateLayout.sequenceMask) {
       throw StateError(
         'Generated metadata for GeneratedSensorState field "sequence" does not match the runtime layout.',
       );
     }
     if (temperature.offset != SensorStateLayout.temperatureOffset ||
+        temperature.index != SensorStateLayout.temperatureIndex ||
         temperature.mask != SensorStateLayout.temperatureMask) {
       throw StateError(
         'Generated metadata for GeneratedSensorState field "temperature" does not match the runtime layout.',
       );
     }
     if (active.offset != SensorStateLayout.activeOffset ||
+        active.index != SensorStateLayout.activeIndex ||
         active.mask != SensorStateLayout.activeMask) {
       throw StateError(
         'Generated metadata for GeneratedSensorState field "active" does not match the runtime layout.',
       );
     }
     if (identity.offset != SensorStateLayout.identityOffset ||
+        identity.index != SensorStateLayout.identityIndex ||
         identity.mask != SensorStateLayout.identityMask) {
       throw StateError(
         'Generated metadata for GeneratedSensorState field "identity" does not match the runtime layout.',
       );
     }
+    allFieldsSelection = layout.selectionFor(layout.fields);
   }
 
   late final Uint32Field sequence;
@@ -222,4 +255,5 @@ final class _SensorStateLayoutSchema {
   late final FixedBytesField identity;
 
   late final RecordLayout layout;
+  late final FieldSelection allFieldsSelection;
 }

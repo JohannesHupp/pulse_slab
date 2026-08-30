@@ -10,3 +10,7 @@ development dependency.
   access helpers, serializers, deserializers, and validation hooks.
 - Prepared the initial pub.dev prerelease for use as a hosted
   `dev_dependency` with `pulse_slab ^0.3.0-beta.1`.
+- Added wide-layout field selections and generated indexes, while preserving
+  compact mask metadata for schemas through 31 fields.
+- Added `SlabFieldKind.uint64Value` for `Uint64ValueField`; legacy `uint64`
+  remains the signed raw-bit-pattern `int` mapping.

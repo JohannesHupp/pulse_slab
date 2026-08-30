@@ -67,9 +67,11 @@ jobs:
       - name: Verify checked-in generated source
         run: |
           dart run build_runner build
-          git diff --exit-code -- example/sensor_state.g.dart test/fixtures/all_scalar_record.g.dart
+          git diff --exit-code -- example/sensor_state.g.dart test/fixtures/all_scalar_record.g.dart test/fixtures/wide_record.g.dart
       - name: Run generator unit and generated-source tests
         run: dart test
+      - name: Run generated Chrome portability test
+        run: dart test -p chrome test/generated_web_portability_test.dart
       - name: Run generated example
         run: dart run example/main.dart
 

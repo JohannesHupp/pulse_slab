@@ -13,6 +13,7 @@ final class AllScalarRecord {
     required this.uint32,
     required this.int64,
     required this.uint64,
+    required this.uint64Value,
     required this.float32,
     required this.float64,
     required this.boolean,
@@ -42,6 +43,9 @@ final class AllScalarRecord {
 
   @SlabField(kind: SlabFieldKind.uint64)
   final int uint64;
+
+  @SlabField(kind: SlabFieldKind.uint64Value)
+  final Uint64Value uint64Value;
 
   @SlabField(kind: SlabFieldKind.float32)
   final double float32;

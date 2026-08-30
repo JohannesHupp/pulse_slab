@@ -57,6 +57,13 @@ enum SlabFieldKind {
   /// A 64-bit unsigned bit pattern represented by [Uint64Field].
   uint64,
 
+  /// An exact portable unsigned 64-bit value represented by [Uint64ValueField].
+  ///
+  /// This maps to [Uint64Value], whose high and low 32-bit words retain every
+  /// bit on Dart VM and JavaScript targets. [uint64] remains the legacy raw
+  /// signed two's-complement [int] representation.
+  uint64Value,
+
   /// A 32-bit floating-point value represented by [Float32Field].
   float32,
 

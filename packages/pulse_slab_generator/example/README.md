@@ -9,6 +9,7 @@ dart run example/main.dart
 ```
 
 `sensor_state.dart` is the declaration users author. Its generated companion
-contains literal offsets/masks, stable descriptors, binary serialization,
-deserialization, and validation. The example then writes and reads the typed
-model through a `PulseStore` transaction.
+contains literal offsets/indexes, compact masks where applicable, stable
+descriptors, binary serialization, deserialization, and validation. The
+example then writes and reads the typed model through a `PulseStore`
+transaction.

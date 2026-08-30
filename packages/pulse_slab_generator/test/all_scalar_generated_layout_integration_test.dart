@@ -59,6 +59,7 @@ AllScalarRecord _record({int int8 = -12, Uint8List? bytes}) => AllScalarRecord(
   uint32: 4000000000,
   int64: -1234567890123,
   uint64: 1234567890123,
+  uint64Value: Uint64Value.maxValue,
   float32: -3.25,
   float64: 123.5,
   boolean: true,
@@ -92,6 +93,14 @@ void _expectMetadata() {
   );
   expect(AllScalarRecordLayout.uint64.mask, AllScalarRecordLayout.uint64Mask);
   expect(
+    AllScalarRecordLayout.uint64Value.offset,
+    AllScalarRecordLayout.uint64ValueOffset,
+  );
+  expect(
+    AllScalarRecordLayout.uint64Value.mask,
+    AllScalarRecordLayout.uint64ValueMask,
+  );
+  expect(
     AllScalarRecordLayout.float32.offset,
     AllScalarRecordLayout.float32Offset,
   );
@@ -119,6 +128,7 @@ void _expectSameValues(AllScalarRecord actual, AllScalarRecord expected) {
   expect(actual.uint32, expected.uint32);
   expect(actual.int64, expected.int64);
   expect(actual.uint64, expected.uint64);
+  expect(actual.uint64Value, expected.uint64Value);
   expect(actual.float32, expected.float32);
   expect(actual.float64, expected.float64);
   expect(actual.boolean, expected.boolean);

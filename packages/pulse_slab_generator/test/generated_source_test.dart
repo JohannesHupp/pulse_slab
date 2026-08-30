@@ -10,12 +10,22 @@ void main() {
 
       expect(generated, contains('abstract final class AllFieldsLayout'));
       expect(generated, contains('static const int int8Offset = 0;'));
-      expect(generated, contains('static const int bytesMask = 2048;'));
-      expect(generated, contains('static const int sizeInBytes = 56;'));
+      expect(generated, contains('static const int bytesMask = 4096;'));
+      expect(generated, contains('static const int sizeInBytes = 64;'));
       expect(generated, contains('static Int8Field get int8 => _schema.int8;'));
       expect(
         generated,
+        contains(
+          'static Uint64ValueField get uint64Value => _schema.uint64Value;',
+        ),
+      );
+      expect(
+        generated,
         contains('static FixedBytesField get bytes => _schema.bytes;'),
+      );
+      expect(
+        generated,
+        contains('static FieldSelection get allFieldsSelection => '),
       );
       expect(generated, contains('reader.get(schema.int8)'));
       expect(generated, contains('writer.set(schema.uint64, value.uint64);'));
@@ -32,9 +42,33 @@ void main() {
         generated,
         contains('if (int8.offset != AllFieldsLayout.int8Offset ||'),
       );
-      expect(generated, contains('int8.mask != AllFieldsLayout.int8Mask) {'));
+      expect(generated, contains('int8.index != AllFieldsLayout.int8Index'));
+      expect(generated, contains('int8.mask != AllFieldsLayout.int8Mask'));
       expect(generated, isNot(contains('fieldByName')));
       expect(generated, isNot(contains('dart:mirrors')));
+    });
+
+    test('emits exact selections instead of masks for wide schemas', () async {
+      final String generated = await _generate(_wideFieldSchema);
+
+      expect(
+        generated,
+        contains('static FieldSelection get allFieldsSelection => '),
+      );
+      expect(generated, contains('static const int field0Index = 0;'));
+      expect(generated, contains('static const int field31Index = 31;'));
+      expect(generated, contains('static const int field62Index = 62;'));
+      expect(
+        generated,
+        contains('static FieldSelection get field62Selection => '),
+      );
+      expect(
+        generated,
+        contains('field62.index != WideFieldsLayout.field62Index'),
+      );
+      expect(generated, isNot(contains('allFieldsMask')));
+      expect(generated, isNot(contains('field31Mask')));
+      expect(generated, isNot(contains('field62Mask')));
     });
 
     test('reports a clear fixed-byte declaration diagnostic', () async {
@@ -53,6 +87,11 @@ void main() {
 
       final String overlap = await _diagnosticFor(_overlappingOffsetSchema);
       expect(overlap, contains('overlaps or precedes'));
+
+      final String wrongUint64Value = await _diagnosticFor(
+        _wrongUint64ValueSchema,
+      );
+      expect(wrongUint64Value, contains('must be declared as Uint64Value'));
     });
 
     test('rejects transforming constructor initializers', () async {
@@ -154,6 +193,7 @@ final class AllFields {
     required this.uint32,
     required this.int64,
     required this.uint64,
+    required this.uint64Value,
     required this.float32,
     required this.float64,
     required this.boolean,
@@ -176,6 +216,8 @@ final class AllFields {
   final int int64;
   @SlabField(kind: SlabFieldKind.uint64)
   final int uint64;
+  @SlabField(kind: SlabFieldKind.uint64Value)
+  final Uint64Value uint64Value;
   @SlabField(kind: SlabFieldKind.float32)
   final double float32;
   @SlabField(kind: SlabFieldKind.float64)
@@ -212,6 +254,20 @@ final class WrongType {
 
   @SlabField(kind: SlabFieldKind.uint16)
   final String value;
+}
+''';
+
+const String _wrongUint64ValueSchema = r'''
+import 'package:pulse_slab/pulse_slab.dart';
+
+part 'test_schema.g.dart';
+
+@SlabRecord()
+final class WrongUint64Value {
+  const WrongUint64Value({required this.value});
+
+  @SlabField(kind: SlabFieldKind.uint64Value)
+  final int value;
 }
 ''';
 
@@ -347,3 +403,30 @@ final class AnnotatedMethod {
   int value() => 1;
 }
 ''';
+
+String get _wideFieldSchema {
+  final String parameters = List<String>.generate(
+    63,
+    (int index) => '    this.field$index = 0,',
+  ).join('\n');
+  final String fields = List<String>.generate(
+    63,
+    (int index) =>
+        '  @SlabField(kind: SlabFieldKind.uint8)\n'
+        '  final int field$index;',
+  ).join('\n\n');
+  return '''
+import 'package:pulse_slab/pulse_slab.dart';
+
+part 'test_schema.g.dart';
+
+@SlabRecord()
+final class WideFields {
+  const WideFields({
+$parameters
+  });
+
+$fields
+}
+''';
+}

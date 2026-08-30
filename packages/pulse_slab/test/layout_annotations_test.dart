@@ -58,6 +58,7 @@ void main() {
           SlabFieldKind.uint32,
           SlabFieldKind.int64,
           SlabFieldKind.uint64,
+          SlabFieldKind.uint64Value,
           SlabFieldKind.float32,
           SlabFieldKind.float64,
           SlabFieldKind.boolean,
