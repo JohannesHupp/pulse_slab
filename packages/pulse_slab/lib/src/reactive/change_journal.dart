@@ -1,5 +1,7 @@
 import 'dart:typed_data';
 
+import '../layout.dart';
+
 const int _maximumUint32 = 0xffffffff;
 const int _maximumJournalCapacity = 0x7fffffff ~/ 8;
 const int _maximumPortableVersion = 0x1fffffffffffff;
@@ -17,8 +19,19 @@ final class ChangeRecord {
     required this.slot,
     required this.generation,
     required this.version,
-    required this.fieldMask,
-  }) {
+    FieldMask? fieldMask,
+    FieldSelection? fieldSelection,
+  })  : _fieldMask = fieldSelection != null && fieldSelection.isCompact
+            ? fieldSelection.fieldMask
+            : fieldMask ?? 0,
+        _fieldSelection = fieldSelection != null && !fieldSelection.isCompact
+            ? fieldSelection
+            : null {
+    if ((fieldMask == null) == (fieldSelection == null)) {
+      throw ArgumentError(
+        'Provide exactly one of fieldMask or fieldSelection.',
+      );
+    }
     _validateUint32(segment, 'segment');
     _validateUint32(slot, 'slot');
     _validateUint32(generation, 'generation');
@@ -30,7 +43,8 @@ final class ChangeRecord {
             '$_maximumPortableVersion.',
       );
     }
-    if (fieldMask < 0 || fieldMask > _maximumPortableFieldMask) {
+    if (fieldMask != null &&
+        (fieldMask < 0 || fieldMask > _maximumPortableFieldMask)) {
       throw RangeError.value(
         fieldMask,
         'fieldMask',
@@ -52,8 +66,25 @@ final class ChangeRecord {
   /// Record version after the commit.
   final int version;
 
+  final FieldMask _fieldMask;
+  final FieldSelection? _fieldSelection;
+
   /// Bit mask of fields changed by the commit.
-  final int fieldMask;
+  ///
+  /// This remains available for compact changes. A wide selection cannot be
+  /// losslessly represented as an integer and throws instead; use
+  /// [fieldSelection] in that case.
+  FieldMask get fieldMask => _fieldSelection?.fieldMask ?? _fieldMask;
+
+  /// The exact changed fields for a wide layout, or `null` for a compact
+  /// change represented by [fieldMask].
+  ///
+  /// Keeping compact journal entries in the existing typed-data mask column
+  /// avoids an allocation on the common small-layout path.
+  FieldSelection? get fieldSelection => _fieldSelection;
+
+  /// Whether this change uses a wide [fieldSelection].
+  bool get hasWideFieldSelection => _fieldSelection != null;
 
   /// Returns a copy combining two changes to the same record.
   ChangeRecord mergedWith(ChangeRecord newer) {
@@ -67,20 +98,39 @@ final class ChangeRecord {
         'The newer change must not have a lower record version.',
       );
     }
+    final FieldSelection? selection = _fieldSelection;
+    final FieldSelection? newerSelection = newer._fieldSelection;
+    if (selection == null && newerSelection == null) {
+      return ChangeRecord(
+        segment: segment,
+        slot: slot,
+        generation: generation,
+        version: newer.version,
+        fieldMask: _fieldMask | newer._fieldMask,
+      );
+    }
+    if (selection == null || newerSelection == null) {
+      throw ArgumentError(
+        'Cannot merge compact and wide field changes for the same record.',
+      );
+    }
     return ChangeRecord(
       segment: segment,
       slot: slot,
       generation: generation,
       version: newer.version,
-      fieldMask: fieldMask | newer.fieldMask,
+      fieldSelection: selection.union(newerSelection),
     );
   }
 
   @override
   String toString() {
+    final FieldSelection? selection = _fieldSelection;
+    final String fields = selection == null
+        ? 'fieldMask: 0x${_fieldMask.toRadixString(16)}'
+        : 'fieldSelection: $selection';
     return 'ChangeRecord(segment: $segment, slot: $slot, '
-        'generation: $generation, version: $version, '
-        'fieldMask: 0x${fieldMask.toRadixString(16)})';
+        'generation: $generation, version: $version, $fields)';
   }
 }
 
@@ -141,6 +191,7 @@ final class ChangeJournal {
   /// Versions remain exact because [ChangeRecord] caps them below 2^53.
   final Float64List _versions;
   final Uint32List _fieldMasks;
+  List<FieldSelection?>? _wideFieldSelections;
 
   var _readIndex = 0;
   var _writeIndex = 0;
@@ -187,7 +238,15 @@ final class ChangeJournal {
     _slots[_writeIndex] = change.slot;
     _generations[_writeIndex] = change.generation;
     _versions[_writeIndex] = change.version.toDouble();
-    _fieldMasks[_writeIndex] = change.fieldMask;
+    _fieldMasks[_writeIndex] = change._fieldMask;
+    final FieldSelection? selection = change._fieldSelection;
+    if (selection != null) {
+      final List<FieldSelection?> selections =
+          _wideFieldSelections ??= List<FieldSelection?>.filled(capacity, null);
+      selections[_writeIndex] = selection;
+    } else {
+      _wideFieldSelections?[_writeIndex] = null;
+    }
     _writeIndex = _next(_writeIndex);
     return true;
   }
@@ -198,13 +257,23 @@ final class ChangeJournal {
       return null;
     }
     final index = _readIndex;
-    final change = ChangeRecord(
-      segment: _segments[index],
-      slot: _slots[index],
-      generation: _generations[index],
-      version: _versions[index].toInt(),
-      fieldMask: _fieldMasks[index],
-    );
+    final FieldSelection? selection = _wideFieldSelections?[index];
+    final ChangeRecord change = selection == null
+        ? ChangeRecord(
+            segment: _segments[index],
+            slot: _slots[index],
+            generation: _generations[index],
+            version: _versions[index].toInt(),
+            fieldMask: _fieldMasks[index],
+          )
+        : ChangeRecord(
+            segment: _segments[index],
+            slot: _slots[index],
+            generation: _generations[index],
+            version: _versions[index].toInt(),
+            fieldSelection: selection,
+          );
+    _wideFieldSelections?[index] = null;
     _readIndex = _next(index);
     _length--;
     return change;
@@ -227,6 +296,7 @@ final class ChangeJournal {
     _readIndex = 0;
     _writeIndex = 0;
     _length = 0;
+    _wideFieldSelections?.fillRange(0, capacity, null);
   }
 
   int _next(int index) => index + 1 == capacity ? 0 : index + 1;

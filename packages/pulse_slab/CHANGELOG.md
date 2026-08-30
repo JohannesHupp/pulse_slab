@@ -5,6 +5,9 @@
 - Aligned the core package release line with the Flutter adapter at `0.3.0-beta.1`.
 - Documented the expanded telemetry diagnostics available through the Flutter
   adapter example.
+- Added portable `FieldSelection` support for layouts with more than 31
+  independently tracked fields while retaining the compact `FieldMask` fast
+  path for existing layouts.
 - Added `Uint64Value` and `Uint64ValueField` for exact portable unsigned
   64-bit values on Dart VM and web targets, while retaining legacy
   `Uint64Field` raw signed two's-complement compatibility.
