@@ -264,8 +264,9 @@ Push-Location packages/pulse_slab_generator
 dart format --output=none --set-exit-if-changed lib test example
 dart analyze
 dart run build_runner build
-git diff --exit-code -- example/sensor_state.g.dart test/fixtures/all_scalar_record.g.dart
+git diff --exit-code -- example/sensor_state.g.dart test/fixtures/all_scalar_record.g.dart test/fixtures/wide_record.g.dart
 dart test
+dart test -p chrome test/generated_web_portability_test.dart
 dart run example/main.dart
 dart pub publish --dry-run
 Pop-Location
