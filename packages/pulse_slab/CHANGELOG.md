@@ -11,6 +11,9 @@
   dependency, and the generator requires Dart 3.9 or later.
 - Documented the expanded telemetry diagnostics available through the Flutter
   adapter example.
+- Added portable `FieldSelection` support for layouts with more than 31
+  independently tracked fields while retaining the compact `FieldMask` fast
+  path for existing layouts.
 
 ## 0.2.0-beta.2
 

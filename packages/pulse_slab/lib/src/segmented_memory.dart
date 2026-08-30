@@ -269,6 +269,12 @@ final class SegmentedMemory {
     int snapshotOffset,
     FieldMask candidateMask,
   ) {
+    if (!handle.layout.supportsFieldMasks) {
+      throw StateError(
+        'Layout "${handle.layout.name}" requires FieldSelection for dirty '
+        'tracking.',
+      );
+    }
     final _MemorySegment segment = _resolve(handle);
     _validateSnapshotRange(
       snapshotBuffer,
@@ -296,6 +302,52 @@ final class SegmentedMemory {
       }
     }
     return result;
+  }
+
+  /// Returns changed fields selected by [candidateSelection] against a record
+  /// image stored in [snapshotBuffer].
+  ///
+  /// This is the wide-layout counterpart to [changedFieldMaskFromBuffer].
+  FieldSelection changedFieldSelectionFromBuffer(
+    RecordHandle handle,
+    Uint8List snapshotBuffer,
+    int snapshotOffset,
+    FieldSelection candidateSelection,
+  ) {
+    if (!identical(candidateSelection.layout, handle.layout)) {
+      throw ArgumentError.value(
+        candidateSelection,
+        'candidateSelection',
+        'Must belong to layout "${handle.layout.name}".',
+      );
+    }
+    final _MemorySegment segment = _resolve(handle);
+    _validateSnapshotRange(
+      snapshotBuffer,
+      snapshotOffset,
+      handle.layout.sizeInBytes,
+    );
+    if (candidateSelection.isEmpty) {
+      return handle.layout.selectionFor(const <Field<Object?>>[]);
+    }
+
+    final int recordOffset = segment.recordOffset(handle.slot);
+    final List<Field<Object?>> changed = <Field<Object?>>[];
+    for (final Field<Object?> field in handle.layout.fields) {
+      if (!candidateSelection.contains(field)) {
+        continue;
+      }
+      final int fieldOffset = field.offset;
+      final int fieldEnd = fieldOffset + field.byteLength;
+      for (var index = fieldOffset; index < fieldEnd; index++) {
+        if (snapshotBuffer[snapshotOffset + index] !=
+            segment.bytes[recordOffset + index]) {
+          changed.add(field);
+          break;
+        }
+      }
+    }
+    return handle.layout.selectionFor(changed);
   }
 
   void _validateSnapshotRange(
@@ -451,15 +503,17 @@ class RecordReader {
 
 /// A controlled mutable record view used during a write transaction.
 ///
-/// Each [set] updates the compact dirty mask only if the stored bytes changed.
-/// Versioning and notification are deliberately left to the transaction commit
-/// layer so several writes merge into one change record.
+/// Each [set] updates compact dirty masks or wide field selections only if the
+/// stored bytes changed. Versioning and notification are deliberately left to
+/// the transaction commit layer so several writes merge into one change record.
 class RecordWriter extends RecordReader {
   // ignore: use_super_parameters
   RecordWriter._(SegmentedMemory memory, RecordHandle handle)
       : super._(memory, handle);
 
   FieldMask _changedMask = 0;
+  FieldSelectionBuilder? _wideChangedFields;
+  late final bool _usesCompactFieldMasks = layout.supportsFieldMasks;
 
   @override
   int get version => _memory.versionOf(handle);
@@ -475,11 +529,39 @@ class RecordWriter extends RecordReader {
     );
   }
 
-  /// The union of field bits changed through this writer.
-  FieldMask get changedMask => _changedMask;
+  /// The union of compact field bits changed through this writer.
+  ///
+  /// This is available only for layouts with at most [maxFieldsPerLayout]
+  /// fields. Use [changedFieldSelection] for a layout of any width.
+  FieldMask get changedMask {
+    if (!_usesCompactFieldMasks) {
+      throw StateError(
+        'Layout "${layout.name}" requires changedFieldSelection instead of '
+        'changedMask.',
+      );
+    }
+    return _changedMask;
+  }
+
+  /// The fields changed through this writer, including wide layouts.
+  FieldSelection get changedFieldSelection {
+    if (_usesCompactFieldMasks) {
+      return layout.selectionFor(
+        _changedMask == 0
+            ? const <Field<Object?>>[]
+            : layout.fields.where(
+                (Field<Object?> field) => (_changedMask & field.mask) != 0,
+              ),
+      );
+    }
+    return _wideChangedFields?.build() ??
+        layout.selectionFor(const <Field<Object?>>[]);
+  }
 
   /// Whether at least one field changed through this writer.
-  bool get hasChanges => _changedMask != 0;
+  bool get hasChanges => _usesCompactFieldMasks
+      ? _changedMask != 0
+      : !(_wideChangedFields?.isEmpty ?? true);
 
   /// Returns whether [value] would change [field] without writing it.
   ///
@@ -507,7 +589,7 @@ class RecordWriter extends RecordReader {
       layout.byteOrder,
     );
     if (changed) {
-      _changedMask |= field.mask;
+      _markChanged(field);
     }
     return changed;
   }
@@ -526,19 +608,35 @@ class RecordWriter extends RecordReader {
       value,
       layout.byteOrder,
     );
-    _changedMask |= field.mask;
+    _markChanged(field);
   }
 
   /// Clears the locally accumulated dirty bits without changing record memory.
   void clearChangedMask() {
     _changedMask = 0;
+    _wideChangedFields?.clear();
   }
 
   /// Returns and clears the locally accumulated dirty mask.
   FieldMask takeChangedMask() {
-    final FieldMask result = _changedMask;
-    _changedMask = 0;
+    final FieldMask result = changedMask;
+    clearChangedMask();
     return result;
+  }
+
+  /// Returns and clears the changed field selection for a layout of any width.
+  FieldSelection takeChangedFieldSelection() {
+    final FieldSelection result = changedFieldSelection;
+    clearChangedMask();
+    return result;
+  }
+
+  void _markChanged(Field<Object?> field) {
+    if (_usesCompactFieldMasks) {
+      _changedMask |= field.mask;
+      return;
+    }
+    (_wideChangedFields ??= FieldSelectionBuilder(layout)).add(field);
   }
 }
 

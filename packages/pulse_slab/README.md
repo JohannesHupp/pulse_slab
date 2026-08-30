@@ -88,7 +88,61 @@ store.release(sensor);
 store.dispose();
 ```
 
-Field descriptor names are metadata. Hot reads and writes use the stable descriptor and its resolved byte offset, not a string lookup. A layout permits at most 31 dirty-tracked fields because it uses a portable, non-negative integer field mask.
+Field descriptor names are metadata. Hot reads and writes use the stable descriptor and its resolved byte offset, not a string lookup.
+
+## Field selection for wide layouts
+
+Layouts with at most 31 fields retain the compact, non-negative integer-mask
+fast path used above: `Field.mask`, `RecordLayout.maskFor`, and
+`watch(fields: ...)` continue to work without a new representation or
+per-change selection allocation. Layouts can now contain more fields. For a
+wide layout, create a layout-scoped `FieldSelection` and pass it through the
+`selection:` parameter instead:
+
+```dart
+final metrics = List<Uint32Field>.generate(
+  63,
+  (index) => Uint32Field('metric_$index'),
+);
+final metricsLayout = RecordLayout(
+  name: 'Metrics',
+  fields: metrics,
+);
+final metricsStore = PulseStore();
+final metricsHandle = metricsStore.allocate(metricsLayout);
+
+final visibleMetrics = metricsLayout.selectionFor(<Field<Object?>>[
+  metrics[0],
+  metrics[31],
+  metrics[62],
+]);
+final metricsSubscription = metricsStore.watch(
+  metricsHandle,
+  selection: visibleMetrics,
+  listener: (change) {
+    if (change.fieldSelection.contains(metrics[62])) {
+      // Refresh the part of the view that consumes metric 62.
+    }
+  },
+);
+
+metricsSubscription.dispose();
+metricsStore.dispose();
+```
+
+`FieldSelection` is tied to its `RecordLayout`, so selections from unrelated
+layouts cannot be merged or compared. Use `Field.selection` when selecting one
+bound field, or `layout.selectionFor(...)` for a setup-time union. Do not use
+the legacy `Field.mask`, `layout.maskFor`, or `watch(fields: ...)` filtering
+APIs for a wide layout: they deliberately remain compact-only and reject a
+wide selection rather than truncate it.
+
+`RecordChange.fieldSelection` always reports the exact changed fields and is
+the portable change representation for a wide layout. Its integer
+`fieldMask` accessor throws for a wide change. Likewise, a wide
+`ChangeRecord` has a non-null `fieldSelection`, while accessing its
+`fieldMask` throws. Compact journal records continue to use their integer
+mask column.
 
 ## Optional generated layouts
 
@@ -167,9 +221,22 @@ deserializer cannot transform an encoded value while rebuilding the object.
 | --- | --- | --- |
 | `immediate` | Calls matching listeners immediately after a successful commit. | No normal queue; reentrant listener calls use a fixed replaceable queue. |
 | `latest` | Keeps only the latest merged state change per subscription until `flush()`. | One pending change per subscription. |
-| `batched` | Retains compact changes until `flush()`. | Fixed journal and subscription bounds. |
+| `batched` | Retains bounded state changes until `flush()`. | Fixed journal and subscription bounds. |
 
-Subscriptions are scoped to one handle and may filter by a field mask. Dispatch order is registration order. Removing a subscription during dispatch is safe; a removed listener will not be invoked later in the same dispatch. A listener may start a new transaction after the original commit. A reentrant immediate change commits synchronously but its immediate listener calls wait until the active traversal finishes. The fixed `maxReentrantImmediateDeliveries` queue replaces its oldest pending state delivery when full and increments `droppedReentrantImmediateDeliveryCount`; it never rejects a committed write. Reentrant `latest` and `batched` subscriptions are routed into their own bounded policy queues immediately, so their coalescing semantics are preserved. Latest and batched delivery retain changes until the next explicit flush. `flush()` rejects reentrant calls from a latest or batched delivery callback. Prefer deferring feedback loops when a flat callback sequence is easier to reason about.
+Subscriptions are scoped to one handle and may filter by a compact field mask or
+a wide `FieldSelection`. Dispatch order is registration order. Removing a
+subscription during dispatch is safe; a removed listener will not be invoked
+later in the same dispatch. A listener may start a new transaction after the
+original commit. A reentrant immediate change commits synchronously but its
+immediate listener calls wait until the active traversal finishes. The fixed
+`maxReentrantImmediateDeliveries` queue replaces its oldest pending state
+delivery when full and increments `droppedReentrantImmediateDeliveryCount`; it
+never rejects a committed write. Reentrant `latest` and `batched`
+subscriptions are routed into their own bounded policy queues immediately, so
+their coalescing semantics are preserved. Latest and batched delivery retain
+changes until the next explicit flush. `flush()` rejects reentrant calls from a
+latest or batched delivery callback. Prefer deferring feedback loops when a
+flat callback sequence is easier to reason about.
 
 If a queued reentrant immediate listener fails, the first failure is rethrown
 when the outermost delivery traversal completes. It never rolls back either
@@ -234,7 +301,12 @@ The central principle is:
 
 > Process every important input, but deliver only the state changes that each consumer can use.
 
-This package reduces allocations and redundant work through typed byte storage, reusable slots, field masks, transaction merging, bounded journals, and targeted listener lists. The separate Flutter adapter adds frame coalescing. Those techniques are workload-specific trade-offs, not a claim that every application will be faster. Benchmark on the target device and workload.
+This package reduces allocations and redundant work through typed byte storage,
+reusable slots, compact masks or wide field selections, transaction merging,
+bounded journals, and targeted listener lists. The separate Flutter adapter
+adds frame coalescing. Those techniques are workload-specific trade-offs, not a
+claim that every application will be faster. Benchmark on the target device and
+workload.
 
 Run the included smoke benchmark:
 
@@ -253,7 +325,9 @@ dart test -p chrome test/web_portability_test.dart
 - Generated layouts are optional. Hand-authored `RecordLayout` and `Field`
   descriptors remain the supported build-free API; projects that opt into
   `pulse_slab_generator` need Dart 3.9 or later.
-- A layout is limited to 31 independently dirty-tracked fields so masks remain exact on native and JavaScript targets.
+- Integer-mask filtering is intentionally limited to compact layouts with at
+  most 31 fields. Wider layouts use layout-scoped `FieldSelection` values;
+  this preserves portable exactness at the cost of word-based selection work.
 - `Int64Field` and `Uint64Field` encode two 32-bit words, so the core remains runnable on Flutter web. Dart JavaScript cannot represent every 64-bit `int` exactly; use a fixed byte field for portable full-width identifiers, counters, or unsigned arithmetic. `Uint64Field` uses a signed two's-complement `int` bit pattern when the high bit is set.
 - Writes are single-isolate and single-writer; nested transactions are rejected, while listener-initiated follow-up transactions use the documented delivery policy semantics.
 - Transaction actions, record listeners, and invalidation callbacks are synchronous APIs.

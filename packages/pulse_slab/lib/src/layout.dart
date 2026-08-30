@@ -2,18 +2,253 @@ import 'dart:typed_data';
 
 import 'errors.dart';
 
-/// The largest number of fields supported by one [RecordLayout].
+/// The largest number of fields supported by the compact [FieldMask] API.
 ///
-/// A layout uses one Dart [int] and bitwise operators as its dirty-field mask.
-/// JavaScript targets apply 32-bit bitwise semantics, so reserving the sign bit
-/// keeps every portable mask non-negative and exact.
+/// This legacy constant intentionally remains at 31 for source compatibility.
+/// [RecordLayout] itself can contain more fields: use [FieldSelection] for
+/// portable dirty tracking and filtering when a layout exceeds this count.
+///
+/// A compact mask uses one Dart [int] and bitwise operators. JavaScript targets
+/// apply 32-bit bitwise semantics, so reserving the sign bit keeps every compact
+/// mask non-negative and exact.
 const int maxFieldsPerLayout = 31;
+
+const int _fieldSelectionWordBits = 31;
+const int _maximumPortableFieldMask = 0x7fffffff;
 
 // Typed-data offsets and lengths stay below this portable positive range.
 const int _maximumPortableTypedDataLength = 0x7fffffff;
 
 /// A compact bit set that identifies fields changed by a record write.
 typedef FieldMask = int;
+
+/// An immutable, layout-scoped field selection for layouts of any width.
+///
+/// Compact layouts use a single [FieldMask]. Wider layouts use 31-bit words so
+/// that every operation remains portable to JavaScript targets. Obtain a
+/// selection from [RecordLayout.selectionFor] or [Field.selection].
+///
+/// Unlike the legacy integer-mask APIs, an empty selection means no fields.
+/// APIs that accept an optional selection use `null` to mean all fields.
+final class FieldSelection {
+  const FieldSelection._compact(this.layout, this._compactMask) : _words = null;
+
+  FieldSelection._wide(this.layout, this._words) : _compactMask = 0;
+
+  /// The layout whose field indexes this selection identifies.
+  final RecordLayout layout;
+
+  final FieldMask _compactMask;
+  final Uint32List? _words;
+
+  /// Whether this selection uses the compact integer representation.
+  bool get isCompact => _words == null;
+
+  /// Whether no fields are selected.
+  bool get isEmpty {
+    final Uint32List? words = _words;
+    if (words == null) {
+      return _compactMask == 0;
+    }
+    for (final int word in words) {
+      if (word != 0) {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  /// The compact integer mask.
+  ///
+  /// This is available only when [isCompact] is true. Wide selections must be
+  /// used with [intersects], [union], or field descriptors rather than being
+  /// truncated to an integer mask.
+  FieldMask get fieldMask {
+    if (!isCompact) {
+      throw StateError(
+        'Field selection for layout "${layout.name}" is wider than '
+        '$maxFieldsPerLayout fields and has no portable integer mask.',
+      );
+    }
+    return _compactMask;
+  }
+
+  /// Returns whether [field] is included in this selection.
+  bool contains(Field<Object?> field) {
+    field.requireOwner(layout);
+    return _containsIndex(field.index);
+  }
+
+  /// Returns whether this selection shares at least one field with [other].
+  ///
+  /// Selections from different layouts cannot be compared because their field
+  /// indexes have unrelated meanings.
+  bool intersects(FieldSelection other) {
+    _requireSameLayout(other);
+    final Uint32List? words = _words;
+    if (words == null) {
+      return (_compactMask & other._compactMask) != 0;
+    }
+    final Uint32List otherWords = other._words!;
+    for (var index = 0; index < words.length; index++) {
+      if ((words[index] & otherWords[index]) != 0) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  /// Returns a selection containing the fields in this selection and [other].
+  FieldSelection union(FieldSelection other) {
+    _requireSameLayout(other);
+    final Uint32List? words = _words;
+    if (words == null) {
+      return FieldSelection._compact(layout, _compactMask | other._compactMask);
+    }
+    final Uint32List otherWords = other._words!;
+    final Uint32List merged = Uint32List(words.length);
+    for (var index = 0; index < words.length; index++) {
+      merged[index] = words[index] | otherWords[index];
+    }
+    return FieldSelection._wide(layout, merged);
+  }
+
+  bool _containsIndex(int index) {
+    final Uint32List? words = _words;
+    if (words == null) {
+      return (_compactMask & (1 << index)) != 0;
+    }
+    final int wordIndex = index ~/ _fieldSelectionWordBits;
+    final int bitIndex = index % _fieldSelectionWordBits;
+    return (words[wordIndex] & (1 << bitIndex)) != 0;
+  }
+
+  void _requireSameLayout(FieldSelection other) {
+    if (!identical(layout, other.layout)) {
+      throw ArgumentError(
+        'Field selections must belong to the same RecordLayout.',
+      );
+    }
+  }
+
+  @override
+  bool operator ==(Object other) {
+    if (other is! FieldSelection || !identical(layout, other.layout)) {
+      return false;
+    }
+    final Uint32List? words = _words;
+    final Uint32List? otherWords = other._words;
+    if (words == null || otherWords == null) {
+      return words == null &&
+          otherWords == null &&
+          _compactMask == other._compactMask;
+    }
+    if (words.length != otherWords.length) {
+      return false;
+    }
+    for (var index = 0; index < words.length; index++) {
+      if (words[index] != otherWords[index]) {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  @override
+  int get hashCode {
+    final Uint32List? words = _words;
+    var result = identityHashCode(layout);
+    if (words == null) {
+      return Object.hash(result, _compactMask);
+    }
+    for (final int word in words) {
+      result = Object.hash(result, word);
+    }
+    return result;
+  }
+
+  @override
+  String toString() {
+    if (isCompact) {
+      return 'FieldSelection(layout: ${layout.name}, '
+          'mask: 0x${_compactMask.toRadixString(16)})';
+    }
+    return 'FieldSelection(layout: ${layout.name}, wide: true)';
+  }
+}
+
+/// Incrementally builds a layout-scoped [FieldSelection].
+///
+/// This is useful when selected fields are discovered dynamically. It keeps a
+/// compact integer for small layouts and allocates one 31-bit word buffer for a
+/// wide layout, independent of how often the same field is added.
+final class FieldSelectionBuilder {
+  /// Creates a builder for [layout].
+  FieldSelectionBuilder(this.layout);
+
+  /// The layout whose fields may be added.
+  final RecordLayout layout;
+
+  FieldMask _compactMask = 0;
+  Uint32List? _wideWords;
+
+  /// Whether no fields have been added since construction or [clear].
+  bool get isEmpty {
+    if (layout.supportsFieldMasks) {
+      return _compactMask == 0;
+    }
+    final Uint32List? words = _wideWords;
+    if (words == null) {
+      return true;
+    }
+    for (final int word in words) {
+      if (word != 0) {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  /// Adds [field] to this builder.
+  ///
+  /// Adding the same field more than once is safe and does not grow the
+  /// resulting selection.
+  void add(Field<Object?> field) {
+    field.requireOwner(layout);
+    if (layout.supportsFieldMasks) {
+      _compactMask |= field.mask;
+      return;
+    }
+    final Uint32List words = _wideWords ??= Uint32List(
+      (layout.fields.length + _fieldSelectionWordBits - 1) ~/
+          _fieldSelectionWordBits,
+    );
+    final int wordIndex = field.index ~/ _fieldSelectionWordBits;
+    final int bitIndex = field.index % _fieldSelectionWordBits;
+    words[wordIndex] |= 1 << bitIndex;
+  }
+
+  /// Returns an immutable snapshot of the selected fields.
+  FieldSelection build() {
+    if (layout.supportsFieldMasks) {
+      return layout.selectionFromMask(_compactMask);
+    }
+    final Uint32List? words = _wideWords;
+    if (words == null) {
+      return layout.selectionFor(const <Field<Object?>>[]);
+    }
+    return FieldSelection._wide(layout, Uint32List.fromList(words));
+  }
+
+  /// Removes every accumulated field while retaining any allocated word buffer.
+  void clear() {
+    _compactMask = 0;
+    final Uint32List? words = _wideWords;
+    if (words != null) {
+      words.fillRange(0, words.length, 0);
+    }
+  }
+}
 
 /// A stable, typed descriptor for a value in a [RecordLayout].
 ///
@@ -65,6 +300,8 @@ abstract class Field<T> {
   RecordLayout? _layout;
   int? _offset;
   int? _index;
+  FieldMask? _compactMask;
+  FieldSelection? _selection;
 
   /// The number of bytes occupied by this field.
   int get byteLength;
@@ -93,11 +330,34 @@ abstract class Field<T> {
   /// The zero-based field position within [layout].
   int get index => _index ?? _unboundFieldStateError(name);
 
-  /// The field's dirty bit in a change mask.
+  /// The field's compact dirty bit in a change mask.
   ///
-  /// Layouts are limited to [maxFieldsPerLayout], so this is always a
-  /// non-negative bit that is portable to JavaScript targets.
-  FieldMask get mask => 1 << index;
+  /// This remains available for layouts with at most [maxFieldsPerLayout]
+  /// fields. Use [selection] for wider layouts.
+  FieldMask get mask {
+    final FieldMask? compactMask = _compactMask;
+    if (compactMask == null) {
+      throw StateError(
+        'Field "$name" belongs to wide layout "${layout.name}". '
+        'Use Field.selection or RecordLayout.selectionFor instead of mask.',
+      );
+    }
+    return compactMask;
+  }
+
+  /// This field as a layout-scoped [FieldSelection].
+  ///
+  /// Wide singleton selections are created lazily so constructing a large
+  /// layout does not allocate one word set per field.
+  FieldSelection get selection {
+    final FieldSelection? current = _selection;
+    if (current != null) {
+      return current;
+    }
+    final RecordLayout owner = _layout ?? _unboundFieldStateError(name);
+    final int fieldIndex = _index ?? _unboundFieldStateError(name);
+    return _selection = owner._selectionForIndex(fieldIndex);
+  }
 
   /// Reads a value from [data] at [absoluteOffset].
   ///
@@ -160,6 +420,9 @@ abstract class Field<T> {
     _layout = owner;
     _offset = fieldOffset;
     _index = fieldIndex;
+    if (owner.supportsFieldMasks) {
+      _compactMask = 1 << fieldIndex;
+    }
   }
 
   /// Verifies that this descriptor belongs to [owner].
@@ -737,9 +1000,9 @@ final class ByteView {
 
 /// Defines a compact, aligned record format for one family of store records.
 ///
-/// Field offsets are calculated once during construction. The package supports up
-/// to [maxFieldsPerLayout] fields because one signed Dart [int] carries dirty
-/// field bits. A descriptor may be attached to only one layout.
+/// Field offsets are calculated once during construction. Layouts with up to
+/// [maxFieldsPerLayout] fields use compact integer dirty masks; wider layouts
+/// use [FieldSelection]. A descriptor may be attached to only one layout.
 final class RecordLayout {
   /// Creates a layout from stable typed [fields].
   ///
@@ -773,13 +1036,6 @@ final class RecordLayout {
     if (selectedFields.isEmpty) {
       throw LayoutException('Layout "$name" must contain at least one field.');
     }
-    if (selectedFields.length > maxFieldsPerLayout) {
-      throw LayoutException(
-        'Layout "$name" has ${selectedFields.length} fields; '
-        'the current limit is $maxFieldsPerLayout.',
-      );
-    }
-
     final Set<String> names = <String>{};
     final Set<Field<Object?>> descriptors = <Field<Object?>>{};
     final List<({Field<Object?> field, int offset, int index})> bindings =
@@ -886,17 +1142,98 @@ final class RecordLayout {
   /// The alignment explicitly requested by the caller, if any.
   int? get requestedAlignment => _requestedAlignment;
 
+  /// Whether this layout can use the legacy compact [FieldMask] API.
+  bool get supportsFieldMasks => _fields.length <= maxFieldsPerLayout;
+
   /// Returns the union mask for [selectedFields].
   ///
   /// This setup-time helper verifies that every descriptor belongs to this
-  /// layout. The returned mask can be passed directly to subscriptions.
+  /// layout. The returned mask can be passed directly to compact-layout
+  /// subscriptions. Use [selectionFor] for wider layouts.
   FieldMask maskFor(Iterable<Field<Object?>> selectedFields) {
+    if (!supportsFieldMasks) {
+      throw StateError(
+        'Layout "$name" has more than $maxFieldsPerLayout fields. '
+        'Use selectionFor instead of maskFor.',
+      );
+    }
     var result = 0;
     for (final Field<Object?> field in selectedFields) {
       field.requireOwner(this);
       result |= field.mask;
     }
     return result;
+  }
+
+  /// Returns a portable selection for [selectedFields].
+  ///
+  /// Every descriptor must belong to this layout. This is the preferred API
+  /// for layouts wider than [maxFieldsPerLayout], and is also available for
+  /// compact layouts when one uniform representation is useful.
+  FieldSelection selectionFor(Iterable<Field<Object?>> selectedFields) {
+    if (supportsFieldMasks) {
+      var result = 0;
+      for (final Field<Object?> field in selectedFields) {
+        field.requireOwner(this);
+        result |= field.mask;
+      }
+      return FieldSelection._compact(this, result);
+    }
+
+    final Uint32List words = Uint32List(
+      (_fields.length + _fieldSelectionWordBits - 1) ~/ _fieldSelectionWordBits,
+    );
+    for (final Field<Object?> field in selectedFields) {
+      field.requireOwner(this);
+      final int wordIndex = field.index ~/ _fieldSelectionWordBits;
+      final int bitIndex = field.index % _fieldSelectionWordBits;
+      words[wordIndex] |= 1 << bitIndex;
+    }
+    return FieldSelection._wide(this, words);
+  }
+
+  FieldSelection _selectionForIndex(int index) {
+    if (supportsFieldMasks) {
+      return FieldSelection._compact(this, 1 << index);
+    }
+    final Uint32List words = Uint32List(
+      (_fields.length + _fieldSelectionWordBits - 1) ~/ _fieldSelectionWordBits,
+    );
+    final int wordIndex = index ~/ _fieldSelectionWordBits;
+    final int bitIndex = index % _fieldSelectionWordBits;
+    words[wordIndex] = 1 << bitIndex;
+    return FieldSelection._wide(this, words);
+  }
+
+  /// Converts a validated compact [mask] into a [FieldSelection].
+  ///
+  /// This is useful when adapting an existing compact-mask API. Wider layouts
+  /// must use [selectionFor] because an integer cannot represent every field.
+  FieldSelection selectionFromMask(FieldMask mask) {
+    if (!supportsFieldMasks) {
+      throw StateError(
+        'Layout "$name" has more than $maxFieldsPerLayout fields and '
+        'cannot create a compact field selection.',
+      );
+    }
+    if (mask < 0 || mask > _maximumPortableFieldMask) {
+      throw ArgumentError.value(
+        mask,
+        'mask',
+        'Must be a non-negative portable field mask.',
+      );
+    }
+    final int supportedMask = _fields.length == maxFieldsPerLayout
+        ? _maximumPortableFieldMask
+        : (1 << _fields.length) - 1;
+    if ((mask & ~supportedMask) != 0) {
+      throw ArgumentError.value(
+        mask,
+        'mask',
+        'Contains bits outside layout "$name".',
+      );
+    }
+    return FieldSelection._compact(this, mask);
   }
 
   @override

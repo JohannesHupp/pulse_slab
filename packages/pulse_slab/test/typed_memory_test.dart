@@ -63,16 +63,6 @@ void main() {
         ),
         throwsA(isA<LayoutException>()),
       );
-      expect(
-        () => RecordLayout(
-          name: 'TooMany',
-          fields: List<Field<Object?>>.generate(
-            maxFieldsPerLayout + 1,
-            (int index) => Uint8Field('field$index'),
-          ),
-        ),
-        throwsA(isA<LayoutException>()),
-      );
     });
 
     test('uses a non-negative portable mask for the maximum field count', () {
