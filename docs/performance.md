@@ -47,6 +47,14 @@ materialized lazily for compact changes, while wide changes retain their exact
 selection. Measure both the compact and wide paths on the deployment target
 when a large schema is latency-sensitive.
 
+`Uint64ValueField` compares its two stored 32-bit words directly before a
+write, so an unchanged write does not materialize a `Uint64Value`. A field read
+does return one immutable value object, and `Uint64Value.toBytes` intentionally
+allocates its eight-byte wire representation. Treat byte conversion as a
+serialization boundary rather than a hot storage access. The core benchmark
+includes a portable unsigned 64-bit field read/write workload using the high
+bit and maximum values.
+
 ## Batching and coalescing
 
 Use an explicit transaction when multiple field writes form one logical update. The store compares values where practical and omits a commit when no field has a net change:
@@ -81,14 +89,15 @@ cd packages/pulse_slab
 dart run benchmark/pulse_slab_benchmark.dart
 ```
 
-The suite covers sequential typed writes, random record updates, transaction
-throughput, unfiltered dispatch, compact field-filtered dispatch, a 63-field
-wide-selection dispatch, frame-style coalescing, slot reuse, an object-model
-baseline, and a small notifier-style baseline. The wide workload selects fields
-across all three 31-bit words and writes the last field, so it complements the
-compact fast-path measurement. It reports elapsed time, operations per second,
-notifications, and coalesced notifications. Allocation and memory fields are
-reported only when the runtime exposes measured values.
+The suite covers sequential typed writes, portable unsigned 64-bit field
+read/write, random record updates, transaction throughput, unfiltered dispatch,
+compact field-filtered dispatch, a 63-field wide-selection dispatch,
+frame-style coalescing, slot reuse, an object-model baseline, and a small
+notifier-style baseline. The wide workload selects fields across all three
+31-bit words and writes the last field, so it complements the compact fast-path
+measurement. It reports elapsed time, operations per second, notifications, and
+coalesced notifications. Allocation and memory fields are reported only when
+the runtime exposes measured values.
 
 Benchmark output is machine-, SDK-, build-mode-, and workload-dependent. Treat it as a regression signal rather than a package-wide performance claim.
 

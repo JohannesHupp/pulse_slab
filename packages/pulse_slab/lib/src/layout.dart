@@ -250,6 +250,116 @@ final class FieldSelectionBuilder {
   }
 }
 
+/// An exact, portable unsigned 64-bit value represented as two unsigned words.
+///
+/// Dart JavaScript targets cannot exactly represent every 64-bit integer as one
+/// `int`. This value deliberately never combines its words into a 64-bit Dart
+/// integer, so [highWord] and [lowWord] retain every bit on native and web
+/// targets. This API intentionally does not accept or return one full-width
+/// Dart [int]. Construct values with [Uint64Value.fromWords], and use
+/// [Uint64ValueField] for typed-memory storage.
+final class Uint64Value implements Comparable<Uint64Value> {
+  /// Creates an exact unsigned value from two unsigned 32-bit words.
+  ///
+  /// [highWord] contains bits 63 through 32 and [lowWord] contains bits 31
+  /// through 0. Both words must be from zero through `0xffffffff`, or this
+  /// constructor throws a [RangeError].
+  Uint64Value.fromWords({required this.highWord, required this.lowWord}) {
+    _validateWord(highWord, 'highWord');
+    _validateWord(lowWord, 'lowWord');
+  }
+
+  const Uint64Value._unchecked(this.highWord, this.lowWord);
+
+  /// The value with every bit cleared.
+  static const Uint64Value zero = Uint64Value._unchecked(0, 0);
+
+  /// The value whose unsigned bit 63 is set and every other bit is clear.
+  static const Uint64Value highBit = Uint64Value._unchecked(0x80000000, 0);
+
+  /// The largest representable unsigned 64-bit value.
+  static const Uint64Value maxValue =
+      Uint64Value._unchecked(0xffffffff, 0xffffffff);
+
+  /// Most-significant unsigned 32-bit word.
+  final int highWord;
+
+  /// Least-significant unsigned 32-bit word.
+  final int lowWord;
+
+  /// Returns whether every bit is zero.
+  bool get isZero => highWord == 0 && lowWord == 0;
+
+  /// Decodes eight bytes in [byteOrder] into an exact unsigned value.
+  ///
+  /// [bytes] must contain exactly eight bytes. Pass the same byte order to
+  /// [toBytes] and [fromBytes] when round-tripping a wire value.
+  factory Uint64Value.fromBytes(
+    Uint8List bytes, {
+    Endian byteOrder = Endian.big,
+  }) {
+    if (bytes.length != 8) {
+      throw RangeError.value(
+        bytes.length,
+        'bytes.length',
+        'Must contain exactly 8 bytes.',
+      );
+    }
+    final ByteData data = ByteData.sublistView(bytes);
+    return _readUint64Value(data, 0, byteOrder);
+  }
+
+  /// Encodes this exact bit pattern into a new eight-byte list in [byteOrder].
+  Uint8List toBytes({Endian byteOrder = Endian.big}) {
+    final ByteData data = ByteData(8);
+    _writeUint64Value(data, 0, this, byteOrder);
+    return data.buffer.asUint8List();
+  }
+
+  /// Compares this unsigned value with [other] by high word then low word.
+  @override
+  int compareTo(Uint64Value other) {
+    final int highComparison = highWord.compareTo(other.highWord);
+    if (highComparison != 0) {
+      return highComparison;
+    }
+    return lowWord.compareTo(other.lowWord);
+  }
+
+  /// Returns this bit pattern as 16 lowercase hexadecimal digits.
+  ///
+  /// The result includes `0x` unless [includePrefix] is false.
+  String toHexString({bool includePrefix = true}) {
+    final String value = '${highWord.toRadixString(16).padLeft(8, '0')}'
+        '${lowWord.toRadixString(16).padLeft(8, '0')}';
+    return includePrefix ? '0x$value' : value;
+  }
+
+  @override
+  bool operator ==(Object other) =>
+      other is Uint64Value &&
+      highWord == other.highWord &&
+      lowWord == other.lowWord;
+
+  @override
+  int get hashCode => Object.hash(highWord, lowWord);
+
+  @override
+  String toString() => 'Uint64Value(${toHexString()})';
+
+  static void _validateWord(int value, String name) {
+    if (value < 0 || value > _maximumUint32) {
+      throw RangeError.value(
+        value,
+        name,
+        'Must be an unsigned 32-bit word.',
+      );
+    }
+  }
+}
+
+const int _maximumUint32 = 0xffffffff;
+
 /// A stable, typed descriptor for a value in a [RecordLayout].
 ///
 /// Create field descriptors once, add them to exactly one layout, then use the
@@ -646,13 +756,14 @@ final class Int64Field extends Field<int> {
 
 /// A 64-bit unsigned integer field.
 ///
-/// This field accepts and returns a signed 64-bit bit pattern. A high-bit-set
-/// value is represented as a negative [int], which preserves all raw bits on
-/// native Dart. Use a domain-specific decimal or [BigInt] conversion at an API
-/// boundary when a human-readable unsigned value above
-/// `0x7fffffffffffffff` is required. JavaScript targets cannot represent every
-/// 64-bit [int] exactly, so use a [FixedBytesField] for portable full-width
-/// values in Flutter web.
+/// This legacy field accepts and returns a signed 64-bit raw two's-complement
+/// bit pattern. A high-bit-set value is represented as a negative [int], which
+/// preserves existing behavior on native Dart. JavaScript targets cannot
+/// exactly represent every 64-bit [int].
+///
+/// Use [Uint64ValueField] for new data that needs portable full-width unsigned
+/// comparison and serialization. It uses two exact 32-bit words instead of a
+/// full-width Dart [int].
 final class Uint64Field extends Field<int> {
   /// Creates a 64-bit unsigned integer field.
   Uint64Field(
@@ -679,6 +790,56 @@ final class Uint64Field extends Field<int> {
 
   @override
   void validate(int value) => _checkSignedInt64Range(value, name);
+}
+
+/// An exact unsigned 64-bit field backed by [Uint64Value] words.
+///
+/// Unlike the legacy [Uint64Field], this field never exposes an imprecise
+/// 64-bit Dart [int] on JavaScript targets. Reads materialize one immutable
+/// [Uint64Value]; no-op change checks compare stored words directly and do not
+/// allocate a value object. Its bytes use the owning [RecordLayout.byteOrder].
+final class Uint64ValueField extends Field<Uint64Value> {
+  /// Creates a portable unsigned 64-bit field.
+  Uint64ValueField(
+    super.name, {
+    super.byteOffset,
+    super.alignment,
+  });
+
+  @override
+  int get byteLength => 8;
+
+  @override
+  int get naturalAlignment => 8;
+
+  @override
+  Uint64Value read(ByteData data, int absoluteOffset, Endian byteOrder) =>
+      _readUint64Value(data, absoluteOffset, byteOrder);
+
+  @override
+  void write(
+    ByteData data,
+    int absoluteOffset,
+    Uint64Value value,
+    Endian byteOrder,
+  ) {
+    _writeUint64Value(data, absoluteOffset, value, byteOrder);
+  }
+
+  @override
+  bool wouldChange(
+    ByteData data,
+    int absoluteOffset,
+    Uint64Value value,
+    Endian byteOrder,
+  ) {
+    if (byteOrder == Endian.little) {
+      return data.getUint32(absoluteOffset, Endian.little) != value.lowWord ||
+          data.getUint32(absoluteOffset + 4, Endian.little) != value.highWord;
+    }
+    return data.getUint32(absoluteOffset, Endian.big) != value.highWord ||
+        data.getUint32(absoluteOffset + 4, Endian.big) != value.lowWord;
+  }
 }
 
 /// A 32-bit floating-point field.
@@ -1274,6 +1435,38 @@ void _checkIntegerRange(int value, int minimum, int maximum, String fieldName) {
       fieldName,
       'Value must fit in the range $minimum through $maximum.',
     );
+  }
+}
+
+Uint64Value _readUint64Value(
+  ByteData data,
+  int offset,
+  Endian byteOrder,
+) {
+  final int highWord;
+  final int lowWord;
+  if (byteOrder == Endian.little) {
+    lowWord = data.getUint32(offset, Endian.little);
+    highWord = data.getUint32(offset + 4, Endian.little);
+  } else {
+    highWord = data.getUint32(offset, Endian.big);
+    lowWord = data.getUint32(offset + 4, Endian.big);
+  }
+  return Uint64Value._unchecked(highWord, lowWord);
+}
+
+void _writeUint64Value(
+  ByteData data,
+  int offset,
+  Uint64Value value,
+  Endian byteOrder,
+) {
+  if (byteOrder == Endian.little) {
+    data.setUint32(offset, value.lowWord, Endian.little);
+    data.setUint32(offset + 4, value.highWord, Endian.little);
+  } else {
+    data.setUint32(offset, value.highWord, Endian.big);
+    data.setUint32(offset + 4, value.lowWord, Endian.big);
   }
 }
 

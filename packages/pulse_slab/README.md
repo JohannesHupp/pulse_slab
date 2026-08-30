@@ -215,6 +215,46 @@ for the full workflow and API. Generated records use `final` fields and an unnam
 generative constructor with matching `this.field` initializing formals, so a
 deserializer cannot transform an encoded value while rebuilding the object.
 
+## Portable unsigned 64-bit values
+
+Use `Uint64ValueField` when a value can use all 64 unsigned bits on both the
+Dart VM and JavaScript targets. `Uint64Value` keeps the exact bit pattern as
+two validated 32-bit words rather than converting it to one potentially lossy
+Dart `int`.
+
+```dart
+import 'dart:typed_data';
+
+import 'package:pulse_slab/pulse_slab.dart';
+
+final store = PulseStore();
+final counter = Uint64ValueField('counter');
+final counterLayout = RecordLayout(
+  name: 'Counter',
+  fields: <Field<Object?>>[counter],
+);
+final counterHandle = store.allocate(counterLayout);
+final value = Uint64Value.fromWords(
+  highWord: 0x80000000, // Bits 63 through 32.
+  lowWord: 0, // Bits 31 through 0.
+);
+
+store.update(counterHandle, (writer) {
+  writer.set(counter, value);
+});
+
+final Uint64Value current = store.read(counterHandle).get(counter);
+final bytesForWire = current.toBytes(byteOrder: Endian.big);
+
+store.dispose();
+```
+
+`compareTo` compares the high word and then the low word as an unsigned value.
+Use matching `Endian` values with `toBytes` and `Uint64Value.fromBytes` at a
+wire boundary. `Uint64Field` remains available without behavior changes for
+existing raw signed two's-complement `int` bit patterns; choose the new field
+for new portable identifiers, counters, and unsigned values.
+
 ## Delivery policies
 
 | Policy | Behavior | Queue bound |
@@ -328,7 +368,7 @@ dart test -p chrome test/web_portability_test.dart
 - Integer-mask filtering is intentionally limited to compact layouts with at
   most 31 fields. Wider layouts use layout-scoped `FieldSelection` values;
   this preserves portable exactness at the cost of word-based selection work.
-- `Int64Field` and `Uint64Field` encode two 32-bit words, so the core remains runnable on Flutter web. Dart JavaScript cannot represent every 64-bit `int` exactly; use a fixed byte field for portable full-width identifiers, counters, or unsigned arithmetic. `Uint64Field` uses a signed two's-complement `int` bit pattern when the high bit is set.
+- `Int64Field` and legacy `Uint64Field` encode two 32-bit words, so the core remains runnable on Flutter web. `Uint64Field` keeps its signed two's-complement `int` bit-pattern behavior for compatibility. Use `Uint64ValueField` for new portable full-width unsigned identifiers, counters, or comparisons.
 - Writes are single-isolate and single-writer; nested transactions are rejected, while listener-initiated follow-up transactions use the documented delivery policy semantics.
 - Transaction actions, record listeners, and invalidation callbacks are synchronous APIs.
 - The journal represents replaceable state, not lossless events.

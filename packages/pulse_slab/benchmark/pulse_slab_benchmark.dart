@@ -30,6 +30,7 @@ void main() {
 
   final results = <BenchmarkResult>[
     _sequentialTypedWrites(schema, operations),
+    _portableUint64ReadWrites(operations),
     _randomRecordUpdates(schema, operations),
     _transactionThroughput(schema, operations),
     _subscriptionDispatch(schema, operations),
@@ -88,6 +89,48 @@ BenchmarkResult _sequentialTypedWrites(
     );
   } finally {
     fixture.dispose();
+  }
+}
+
+BenchmarkResult _portableUint64ReadWrites(int operations) {
+  final Uint64ValueField value = Uint64ValueField('value');
+  final RecordLayout layout = RecordLayout(
+    name: 'PortableUint64BenchmarkRecord',
+    fields: <Field<Object?>>[value],
+  );
+  final PulseStore store = PulseStore();
+  final RecordHandle handle = store.allocate(layout);
+  final List<Uint64Value> values = <Uint64Value>[
+    Uint64Value.highBit,
+    Uint64Value.maxValue,
+    Uint64Value.zero,
+  ];
+
+  try {
+    return measureBenchmark(
+      name: 'portable Uint64Value field read/write',
+      operations: operations,
+      warmupOperations: _warmupCount(operations),
+      body: (count) {
+        var checksum = 0;
+        for (var index = 0; index < count; index++) {
+          final Uint64Value expected = values[index % values.length];
+          store.update(handle, (writer) {
+            writer.set(value, expected);
+          });
+          final Uint64Value actual = store.read(handle).get(value);
+          checksum ^= actual.highWord;
+          checksum ^= actual.lowWord;
+        }
+        return BenchmarkWorkResult(
+          emittedNotifications: 0,
+          coalescedNotifications: 0,
+          checksum: checksum,
+        );
+      },
+    );
+  } finally {
+    store.dispose();
   }
 }
 
