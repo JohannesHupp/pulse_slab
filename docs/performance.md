@@ -40,7 +40,13 @@ The Flutter adapter uses a frame scheduler by default. It can accept many core c
 
 Journal capacity is fixed. Overwrite behavior discards the oldest replaceable observation when full. Reject-newest behavior preserves the committed state but rejects journal admission and increments `PulseStore.rejectedJournalChangeCount`. Neither policy silently turns a lossless event into a best-effort state update.
 
-Treat journal utilization, overwrite counts, rejected admissions, processed input count, and UI delivery count as operational signals. The Flutter telemetry example is designed to make the gap between processed input and UI delivery visible at high configured input rates.
+Treat journal utilization, overwrite counts, rejected admissions, raw input
+count, committed record count, and UI delivery count as distinct operational
+signals. The Flutter telemetry example is designed to make their relationship
+visible at high configured input rates. Its default journal mode samples and
+clears every 250 ms, so stable utilization represents a recent observation
+window rather than accumulated backlog. Its retained pressure modes use a small
+fixed journal to demonstrate overwrite-oldest and reject-newest behavior.
 
 ## Running benchmarks
 
@@ -64,7 +70,20 @@ cd packages/pulse_slab_flutter/example
 flutter run --profile
 ```
 
-Use Flutter DevTools to inspect frame time, rebuild counts, CPU samples, and allocations. Raise the simulated update rate until input or UI work becomes visible, then compare processed updates with UI-delivered updates, coalesced updates, simulation drops, and journal metrics. The difference should come from intentional filtering and coalescing, not an unbounded queue or hidden lossless-event assumption.
+Use Flutter DevTools to inspect frame time, rebuild counts, CPU samples, and
+allocations. Raise the simulated update rate until input or UI work becomes
+visible, then compare raw inputs, committed records, transaction-compacted
+inputs, frame deliveries, frame-coalesced changes, simulation drops, and
+journal metrics. Select Burst transactions to make several synchronous commits
+arrive before one Flutter frame. The difference should come from intentional
+filtering and coalescing, not an unbounded queue or hidden lossless-event
+assumption.
+
+The example intentionally keeps all 24 sensor charts mounted in a two-column
+grid, which creates a controlled widget and paint workload. Each chart records
+at most one latest-state sample per frame-coalesced delivery rather than one
+sample per raw producer input. Its top-right FPS indicator is derived from
+Flutter engine timing records and is most useful in profile or release mode.
 
 ## Why input frequency is not UI frequency
 
