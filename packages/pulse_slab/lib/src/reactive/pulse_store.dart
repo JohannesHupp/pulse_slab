@@ -18,11 +18,27 @@ const int _maximumRecordVersion = 0x1fffffffffffff;
 /// state. A change object is intentionally compact: it does not copy record
 /// bytes or materialize an intermediate state object.
 final class RecordChange {
-  const RecordChange._({
+  RecordChange._({
     required this.handle,
     required this.version,
-    required this.fieldMask,
-  });
+    FieldMask? fieldMask,
+    FieldSelection? fieldSelection,
+  })  : _fieldMask = fieldMask ?? 0,
+        _fieldSelection = fieldSelection {
+    if ((fieldMask == null) == (fieldSelection == null)) {
+      throw ArgumentError(
+        'Provide exactly one of fieldMask or fieldSelection.',
+      );
+    }
+    if (fieldSelection != null &&
+        !identical(fieldSelection.layout, handle.layout)) {
+      throw ArgumentError.value(
+        fieldSelection,
+        'fieldSelection',
+        'Must belong to the changed record layout.',
+      );
+    }
+  }
 
   /// The stable identity of the changed record.
   final RecordHandle handle;
@@ -30,13 +46,32 @@ final class RecordChange {
   /// The record version after its transaction committed.
   final int version;
 
+  final FieldMask _fieldMask;
+  final FieldSelection? _fieldSelection;
+
   /// Fields whose final encoded bytes differ from the pre-transaction state.
-  final FieldMask fieldMask;
+  ///
+  /// This remains available for compact layouts. Wide changes have no portable
+  /// integer mask and throw instead; use [fieldSelection].
+  FieldMask get fieldMask => _fieldSelection?.fieldMask ?? _fieldMask;
+
+  /// The exact changed fields for this record.
+  ///
+  /// Compact changes are converted lazily, preserving their integer-mask hot
+  /// path until a caller explicitly asks for this representation.
+  FieldSelection get fieldSelection =>
+      _fieldSelection ?? handle.layout.selectionFromMask(_fieldMask);
+
+  /// Whether this change was produced by a wide layout.
+  bool get hasWideFieldSelection => _fieldSelection != null;
 
   @override
   String toString() {
-    return 'RecordChange(handle: $handle, version: $version, '
-        'fieldMask: 0x${fieldMask.toRadixString(16)})';
+    final FieldSelection? selection = _fieldSelection;
+    final String fields = selection == null
+        ? 'fieldMask: 0x${_fieldMask.toRadixString(16)}'
+        : 'fieldSelection: $selection';
+    return 'RecordChange(handle: $handle, version: $version, $fields)';
   }
 }
 
@@ -67,6 +102,7 @@ final class StoreSubscription {
     required PulseStore store,
     required this.handle,
     required this.fields,
+    required this.selection,
     required this.policy,
     required RecordChangeListener listener,
     StoreSubscriptionInvalidationListener? onInvalidated,
@@ -81,8 +117,12 @@ final class StoreSubscription {
   /// Handle this subscription observes.
   final RecordHandle handle;
 
-  /// Bit mask accepted by this subscription; zero means all layout fields.
+  /// Bit mask accepted by this subscription; zero means all layout fields
+  /// unless [selection] is set.
   final FieldMask fields;
+
+  /// Wide-layout selection accepted by this subscription, when configured.
+  final FieldSelection? selection;
 
   /// Delivery cadence selected for this subscription.
   final DeliveryPolicy policy;
@@ -90,6 +130,7 @@ final class StoreSubscription {
   var _isActive = true;
   var _hasLatestPending = false;
   var _pendingFieldMask = 0;
+  FieldSelection? _pendingFieldSelection;
   var _pendingVersion = 0;
 
   /// Whether the listener can still receive notifications.
@@ -103,18 +144,34 @@ final class StoreSubscription {
     _store._removeSubscription(this);
   }
 
-  bool _matches(FieldMask changedFields) =>
-      fields == 0 || (fields & changedFields) != 0;
+  bool _matches(RecordChange change) {
+    final FieldSelection? selected = selection;
+    if (selected != null) {
+      return selected.intersects(change.fieldSelection);
+    }
+    return fields == 0 || (fields & change.fieldMask) != 0;
+  }
 
   /// Returns whether this was the first pending latest delivery.
   bool _mergeLatest(RecordChange change) {
     if (_hasLatestPending) {
-      _pendingFieldMask |= change.fieldMask;
+      if (change.hasWideFieldSelection) {
+        final FieldSelection changed = change.fieldSelection;
+        _pendingFieldSelection = _pendingFieldSelection == null
+            ? changed
+            : _pendingFieldSelection!.union(changed);
+      } else {
+        _pendingFieldMask |= change.fieldMask;
+      }
       _pendingVersion = change.version;
       return false;
     }
     _hasLatestPending = true;
-    _pendingFieldMask = change.fieldMask;
+    if (change.hasWideFieldSelection) {
+      _pendingFieldSelection = change.fieldSelection;
+    } else {
+      _pendingFieldMask = change.fieldMask;
+    }
     _pendingVersion = change.version;
     return true;
   }
@@ -123,13 +180,21 @@ final class StoreSubscription {
     if (!_isActive || !_hasLatestPending) {
       return null;
     }
-    final change = RecordChange._(
-      handle: handle,
-      version: _pendingVersion,
-      fieldMask: _pendingFieldMask,
-    );
+    final FieldSelection? selection = _pendingFieldSelection;
+    final RecordChange change = selection == null
+        ? RecordChange._(
+            handle: handle,
+            version: _pendingVersion,
+            fieldMask: _pendingFieldMask,
+          )
+        : RecordChange._(
+            handle: handle,
+            version: _pendingVersion,
+            fieldSelection: selection,
+          );
     _hasLatestPending = false;
     _pendingFieldMask = 0;
+    _pendingFieldSelection = null;
     _pendingVersion = 0;
     return change;
   }
@@ -138,6 +203,7 @@ final class StoreSubscription {
     _isActive = false;
     _hasLatestPending = false;
     _pendingFieldMask = 0;
+    _pendingFieldSelection = null;
     _pendingVersion = 0;
   }
 
@@ -206,12 +272,22 @@ final class TransactionRecordWriter {
 
   /// Fields whose writes differed at least once during this transaction.
   ///
-  /// The committed [RecordChange.fieldMask] is more precise: it contains only
-  /// fields whose final encoded bytes differ from their bytes before the
-  /// transaction began.
+  /// The committed [RecordChange.fieldMask] or
+  /// [RecordChange.fieldSelection] is more precise: it contains only fields
+  /// whose final encoded bytes differ from their bytes before the transaction
+  /// began.
   FieldMask get changedMask {
     _state._ensureActive();
     return _pending.writer.changedMask;
+  }
+
+  /// Fields whose writes differed at least once during this transaction.
+  ///
+  /// This works for layouts of any width. The committed change is still more
+  /// precise because it removes fields restored before commit.
+  FieldSelection get changedFieldSelection {
+    _state._ensureActive();
+    return _pending.writer.changedFieldSelection;
   }
 }
 
@@ -484,10 +560,14 @@ final class PulseStore {
 
   /// Subscribes to committed changes for [handle].
   ///
-  /// [fields] is a union of [Field.mask] values. A value of zero watches all
-  /// fields. Subscription order is insertion order for a record. A listener
-  /// added during notification starts with a later change; a listener disposed
-  /// during notification is not called again in that traversal.
+  /// [fields] is a union of [Field.mask] values for a compact layout. A value
+  /// of zero watches all fields. For wide layouts, pass a layout-scoped
+  /// [selection] from [RecordLayout.selectionFor]; the legacy [fields] fast
+  /// path intentionally remains integer-only.
+  ///
+  /// Subscription order is insertion order for a record. A listener added
+  /// during notification starts with a later change; a listener disposed during
+  /// notification is not called again in that traversal.
   ///
   /// [onInvalidated] is called once when [handle] is released or this store is
   /// disposed. It is not called by [StoreSubscription.dispose]. This makes it
@@ -497,6 +577,7 @@ final class PulseStore {
   StoreSubscription watch(
     RecordHandle handle, {
     FieldMask fields = 0,
+    FieldSelection? selection,
     DeliveryPolicy policy = DeliveryPolicy.immediate,
     StoreSubscriptionInvalidationListener? onInvalidated,
     required RecordChangeListener listener,
@@ -504,11 +585,12 @@ final class PulseStore {
     _ensureOpen();
     _ensureCommittedAccess('subscribe');
     _memory.validateHandle(handle);
-    _validateSelectedFields(handle.layout, fields);
+    _validateSelectedFields(handle.layout, fields, selection);
     final StoreSubscription subscription = StoreSubscription._(
       store: this,
       handle: handle,
       fields: fields,
+      selection: selection,
       policy: policy,
       listener: listener,
       onInvalidated: onInvalidated,
@@ -614,7 +696,26 @@ final class PulseStore {
     }
   }
 
-  void _validateSelectedFields(RecordLayout layout, FieldMask fields) {
+  void _validateSelectedFields(
+    RecordLayout layout,
+    FieldMask fields,
+    FieldSelection? selection,
+  ) {
+    if (selection != null) {
+      if (fields != 0) {
+        throw ArgumentError(
+          'Provide either fields or selection, not both.',
+        );
+      }
+      if (!identical(selection.layout, layout)) {
+        throw ArgumentError.value(
+          selection,
+          'selection',
+          'Must belong to layout "${layout.name}".',
+        );
+      }
+      return;
+    }
     if (fields < 0 || fields > 0x7fffffff) {
       throw ArgumentError.value(
         fields,
@@ -625,17 +726,15 @@ final class PulseStore {
     if (fields == 0) {
       return;
     }
-    var supportedMask = 0;
-    for (final Field<Object?> field in layout.fields) {
-      supportedMask |= field.mask;
-    }
-    if ((fields & ~supportedMask) != 0) {
+    if (!layout.supportsFieldMasks) {
       throw ArgumentError.value(
         fields,
         'fields',
-        'Contains bits outside layout "${layout.name}".',
+        'Layout "${layout.name}" has more than $maxFieldsPerLayout fields. '
+            'Use selection instead.',
       );
     }
+    layout.selectionFromMask(fields);
   }
 
   void _removeSubscription(StoreSubscription subscription) {
@@ -981,34 +1080,58 @@ final class _TransactionState {
 
     final List<_PendingWrite> changed = <_PendingWrite>[];
     for (final _PendingWrite pending in _pending.values) {
-      final FieldMask netChangedMask = _netChangedMask(pending);
-      if (netChangedMask == 0) {
-        continue;
+      if (pending.handle.layout.supportsFieldMasks) {
+        final FieldMask netChangedMask = _netChangedMask(pending);
+        if (netChangedMask == 0) {
+          continue;
+        }
+        pending.netChangedMask = netChangedMask;
+      } else {
+        final FieldSelection netChangedSelection =
+            _netChangedFieldSelection(pending);
+        if (netChangedSelection.isEmpty) {
+          continue;
+        }
+        pending.netChangedSelection = netChangedSelection;
       }
       if (_store._memory.versionOf(pending.handle) == _maximumRecordVersion) {
         throw const VersionOverflowException(
           'A record version reached the portable exact-integer limit.',
         );
       }
-      pending.netChangedMask = netChangedMask;
       changed.add(pending);
     }
 
     for (final _PendingWrite pending in changed) {
       final int version = _store._memory.incrementVersion(pending.handle);
-      final RecordChange change = RecordChange._(
-        handle: pending.handle,
-        version: version,
-        fieldMask: pending.netChangedMask,
-      );
+      final FieldSelection? selection = pending.netChangedSelection;
+      final RecordChange change = selection == null
+          ? RecordChange._(
+              handle: pending.handle,
+              version: version,
+              fieldMask: pending.netChangedMask,
+            )
+          : RecordChange._(
+              handle: pending.handle,
+              version: version,
+              fieldSelection: selection,
+            );
       final bool journalRetained = _store.journal.append(
-        ChangeRecord(
-          segment: pending.handle.segment,
-          slot: pending.handle.slot,
-          generation: pending.handle.generation,
-          version: version,
-          fieldMask: pending.netChangedMask,
-        ),
+        selection == null
+            ? ChangeRecord(
+                segment: pending.handle.segment,
+                slot: pending.handle.slot,
+                generation: pending.handle.generation,
+                version: version,
+                fieldMask: pending.netChangedMask,
+              )
+            : ChangeRecord(
+                segment: pending.handle.segment,
+                slot: pending.handle.slot,
+                generation: pending.handle.generation,
+                version: version,
+                fieldSelection: selection,
+              ),
       );
       if (!journalRetained) {
         _store._rejectedJournalChangeCount++;
@@ -1033,6 +1156,24 @@ final class _TransactionState {
       _store._transactionScratch.bytes,
       snapshotOffset,
       changedMask,
+    );
+  }
+
+  FieldSelection _netChangedFieldSelection(_PendingWrite pending) {
+    final FieldSelection changedSelection =
+        pending.writer.changedFieldSelection;
+    if (changedSelection.isEmpty) {
+      return changedSelection;
+    }
+    final int? snapshotOffset = pending.snapshotOffset;
+    if (snapshotOffset == null) {
+      return pending.handle.layout.selectionFor(const <Field<Object?>>[]);
+    }
+    return _store._memory.changedFieldSelectionFromBuffer(
+      pending.handle,
+      _store._transactionScratch.bytes,
+      snapshotOffset,
+      changedSelection,
     );
   }
 
@@ -1076,7 +1217,8 @@ final class _PendingWrite {
   final RecordHandle handle;
   final RecordWriter writer;
   int? snapshotOffset;
-  var netChangedMask = 0;
+  FieldMask netChangedMask = 0;
+  FieldSelection? netChangedSelection;
 }
 
 /// Reuses rollback storage between synchronous transactions in one store.
@@ -1158,7 +1300,7 @@ final class _SubscriptionBucket {
     try {
       for (var index = 0; index < boundary; index++) {
         final StoreSubscription subscription = _subscriptions[index];
-        if (subscription._isActive && subscription._matches(change.fieldMask)) {
+        if (subscription._isActive && subscription._matches(change)) {
           final _ListenerFailure? dispatchFailure = store._route(
             subscription,
             change,
@@ -1185,8 +1327,7 @@ final class _SubscriptionBucket {
     try {
       for (var index = 0; index < boundary; index++) {
         final StoreSubscription subscription = _subscriptions[index];
-        if (!subscription._isActive ||
-            !subscription._matches(change.fieldMask)) {
+        if (!subscription._isActive || !subscription._matches(change)) {
           continue;
         }
         if (subscription.policy == DeliveryPolicy.immediate) {

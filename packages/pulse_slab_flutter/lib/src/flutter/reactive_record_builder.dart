@@ -33,15 +33,18 @@ final class ReactiveRecordListenable extends FrameCoalescingNotifier
     required this.store,
     required this.handle,
     int fields = 0,
+    FieldSelection? selection,
     super.policy = FlutterDeliveryPolicy.frame,
     super.scheduleFrameCallback,
     super.cancelFrameCallback,
   }) : super(
           fields: fields,
+          selection: selection,
         ) {
     _subscription = store.watch(
       handle,
       fields: fields,
+      selection: selection,
       policy: DeliveryPolicy.immediate,
       listener: _onStoreChange,
       onInvalidated: _onStoreInvalidated,
@@ -69,6 +72,10 @@ final class ReactiveRecordListenable extends FrameCoalescingNotifier
   bool get isRecordAvailable => _isRecordAvailable;
 
   void _onStoreChange(RecordChange change) {
+    if (selection != null || change.hasWideFieldSelection) {
+      markChangedSelection(change.fieldSelection);
+      return;
+    }
     markChanged(change.fieldMask);
   }
 
@@ -101,6 +108,7 @@ class ReactiveRecordBuilder extends StatefulWidget {
     required this.handle,
     required this.builder,
     this.fields = 0,
+    this.selection,
     this.deliveryPolicy = FlutterDeliveryPolicy.frame,
     this.unavailableBuilder,
     super.key,
@@ -114,6 +122,12 @@ class ReactiveRecordBuilder extends StatefulWidget {
 
   /// Field mask that can trigger a rebuild; zero selects all fields.
   final int fields;
+
+  /// Layout-scoped fields that can trigger a rebuild.
+  ///
+  /// Use this portable form for layouts with more than 31 fields. It must not
+  /// be combined with a nonzero [fields] mask.
+  final FieldSelection? selection;
 
   /// UI-facing notification cadence.
   final FlutterDeliveryPolicy deliveryPolicy;
@@ -143,6 +157,7 @@ final class _ReactiveRecordBuilderState extends State<ReactiveRecordBuilder> {
     if (oldWidget.store != widget.store ||
         oldWidget.handle != widget.handle ||
         oldWidget.fields != widget.fields ||
+        oldWidget.selection != widget.selection ||
         oldWidget.deliveryPolicy != widget.deliveryPolicy) {
       _unbind();
       _bind();
@@ -154,6 +169,7 @@ final class _ReactiveRecordBuilderState extends State<ReactiveRecordBuilder> {
       store: widget.store,
       handle: widget.handle,
       fields: widget.fields,
+      selection: widget.selection,
       policy: widget.deliveryPolicy,
     );
     _listenable.addListener(_onUiChange);
