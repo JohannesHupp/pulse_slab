@@ -13,15 +13,19 @@ compatible `pulse_slab` versions, while the manual runtime API stays build-free.
 
 ## Unreleased
 
+## 0.3.0-beta.1
+
 - Added the optional `pulse_slab_generator` pub.dev package for build-time
   typed layouts, serializers, deserializers, and validation hooks. The Dart
   3.6+ core retains its manual `RecordLayout` API and no build dependency.
+- Added portable `FieldSelection` filtering for layouts with more than 31
+  independently tracked fields while retaining the compact mask fast path.
+- Added `Uint64Value` and `Uint64ValueField` for exact portable unsigned
+  64-bit values, while retaining legacy `Uint64Field` raw-bit compatibility.
 - Create one package-specific GitHub Release after each successful tag-triggered
   pub.dev publication, marking semantic prereleases as GitHub pre-releases.
 - Add an idempotent manual workflow for backfilling GitHub Releases for existing
   package tags without calling pub.dev again.
-
-## 0.3.0-beta.1
 
 - Expanded the Flutter telemetry example with clearer state-update diagnostics,
   sensor history views, and a rendered FPS indicator.

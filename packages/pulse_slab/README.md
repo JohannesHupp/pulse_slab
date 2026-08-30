@@ -371,7 +371,11 @@ dart test -p chrome test/web_portability_test.dart
 - Integer-mask filtering is intentionally limited to compact layouts with at
   most 31 fields. Wider layouts use layout-scoped `FieldSelection` values;
   this preserves portable exactness at the cost of word-based selection work.
-- `Int64Field` and legacy `Uint64Field` encode two 32-bit words, so the core remains runnable on Flutter web. `Uint64Field` keeps its signed two's-complement `int` bit-pattern behavior for compatibility. Use `Uint64ValueField` for new portable full-width unsigned identifiers, counters, or comparisons.
+- `Int64Field` and legacy `Uint64Field` encode two 32-bit words, so the core
+  remains runnable on Flutter web. `Uint64Field` keeps its signed
+  two's-complement `int` bit-pattern behavior for compatibility. Use
+  `Uint64ValueField` for new portable full-width unsigned identifiers,
+  counters, or comparisons.
 - Writes are single-isolate and single-writer; nested transactions are rejected, while listener-initiated follow-up transactions use the documented delivery policy semantics.
 - Transaction actions, record listeners, and invalidation callbacks are synchronous APIs.
 - The journal represents replaceable state, not lossless events.

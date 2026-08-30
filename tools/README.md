@@ -26,8 +26,9 @@ cd packages/pulse_slab_generator
 dart format --output=none --set-exit-if-changed lib test example
 dart analyze
 dart run build_runner build
-git diff --exit-code -- example/sensor_state.g.dart test/fixtures/all_scalar_record.g.dart
+git diff --exit-code -- example/sensor_state.g.dart test/fixtures/all_scalar_record.g.dart test/fixtures/wide_record.g.dart
 dart test
+dart test -p chrome test/generated_web_portability_test.dart
 dart run example/main.dart
 dart pub publish --dry-run
 ~~~
@@ -89,9 +90,9 @@ dart tools/prepare_publish_packages.dart --clean
 
 ## Coverage summary
 
-The CI workflow writes a compact per-package LCOV table to the GitHub Actions
-job summary. Generate the same Markdown report locally after collecting core
-and Flutter coverage:
+The CI workflow writes a compact core and Flutter-adapter LCOV table to the
+GitHub Actions job summary. Generate the same Markdown report locally after
+collecting their coverage:
 
 ~~~powershell
 dart run tools/coverage_summary.dart `

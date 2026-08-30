@@ -8,13 +8,16 @@
 flowchart LR
   DartApp[Dart application or service] --> CorePublic["package:pulse_slab/pulse_slab.dart"]
   FlutterApp[Flutter application] --> FlutterPublic["package:pulse_slab_flutter/pulse_slab_flutter.dart"]
+  Schema[Annotated record sources] --> GeneratorPublic["pulse_slab_generator build step"]
+  GeneratorPublic --> Generated[Generated typed layout source]
+  Generated --> CorePublic
   FlutterPublic --> CorePublic
   CorePublic --> Core["Typed memory, layouts, store, journal, subscriptions, worker"]
   FlutterPublic --> Adapter["Frame coalescer, listenables, record builders"]
   Adapter --> Widgets[Field-filtered Flutter widgets]
 ```
 
-The core package has no Flutter SDK dependency. A Flutter application can depend on `pulse_slab_flutter` alone because it re-exports the core public API. A non-Flutter application should depend directly on `pulse_slab` and avoid importing UI concepts.
+The core package has no Flutter SDK dependency. A Flutter application can depend on `pulse_slab_flutter` alone because it re-exports the core public API. A non-Flutter application should depend directly on `pulse_slab` and avoid importing UI concepts. Applications that opt into `pulse_slab_generator` use it only as a development dependency: it reads core annotations and writes typed source that depends on the core runtime, not on the generator at runtime.
 
 The repository uses a Pub workspace for development. It resolves the local
 versioned packages as one dependency graph; the published packages retain their
@@ -76,10 +79,14 @@ flowchart TB
   FlutterAdapter --> Scheduler[Frame scheduler]
   FlutterAdapter --> Builder[ReactiveRecordBuilder]
 
+  GeneratorPublic["pulse_slab_generator build-time library"] --> Generator[Source generator]
+  Generator --> Generated[Typed descriptors, layouts, serializers, validators]
+  Generated --> CorePublic
+
   Example[Telemetry example] --> FlutterPublic
 ```
 
-Implementation details stay under each package's `lib/src` directory. The core public entry point exports only data-plane concepts. The Flutter public entry point exports the core API plus Flutter-specific adapters.
+Implementation details stay under each package's `lib/src` directory. The core public entry point exports only data-plane concepts. The Flutter public entry point exports the core API plus Flutter-specific adapters. The generator is an optional third package and is executed by `build_runner`; it remains outside the runtime dependency graph.
 
 ## Delivery and lifecycle boundaries
 

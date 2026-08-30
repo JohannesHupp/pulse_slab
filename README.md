@@ -73,10 +73,10 @@ documentation](docs/architecture.md).
 Every push and pull request runs core, generator, Flutter adapter, and
 telemetry-example tests before coverage collection and publication validation.
 Generator verification includes a checked-in generated-source freshness check
-and its runnable example. The GitHub Actions summary includes a compact
-per-component coverage table, and the workflow uploads an isolated `publish/`
-artifact containing all three pub.dev packages. The generator's compact,
-runnable Dart example is retained in its archive; the core and Flutter
+and its runnable example. The GitHub Actions summary includes a compact core
+and Flutter-adapter coverage table, and the workflow uploads an isolated
+`publish/` artifact containing all three pub.dev packages. The generator's
+compact, runnable Dart example is retained in its archive; the core and Flutter
 examples remain excluded.
 
 A verified push to `main` is a release for a publishable package: it creates
@@ -85,12 +85,13 @@ through GitHub OIDC trusted publishing. The core is published first; the
 Flutter adapter and generator wait for their required core version to become
 visible before publishing.
 
-The first release of each publishable package still requires the one-time
-pub.dev bootstrap and GitHub environment configuration described in [Release
-automation](docs/releasing.md). After that setup, maintainers release by
-updating the relevant package version and changelog, then merging the release
-change to `main`. The telemetry application remains a repository component and
-is never published.
+The first release of a new package requires the one-time pub.dev bootstrap and
+GitHub environment configuration described in [Release
+automation](docs/releasing.md). The three package records already exist on
+pub.dev; before a release, maintainers still confirm the trusted-publisher and
+GitHub environment settings. They then release by updating the relevant package
+version and changelog, then merging the release change to `main`. The telemetry
+application remains a repository component and is never published.
 
 Repository and issue tracker:
 
@@ -119,8 +120,9 @@ cd ../pulse_slab_generator
 dart format --output=none --set-exit-if-changed lib test example
 dart analyze
 dart run build_runner build
-git diff --exit-code -- example/sensor_state.g.dart test/fixtures/all_scalar_record.g.dart
+git diff --exit-code -- example/sensor_state.g.dart test/fixtures/all_scalar_record.g.dart test/fixtures/wide_record.g.dart
 dart test
+dart test -p chrome test/generated_web_portability_test.dart
 dart run example/main.dart
 dart pub publish --dry-run
 
