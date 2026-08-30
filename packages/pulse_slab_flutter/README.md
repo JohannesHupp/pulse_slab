@@ -58,6 +58,28 @@ most once per rendered frame. Use FlutterDeliveryPolicy.manual and flush on the
 underlying ReactiveRecordListenable for deterministic widget tests or an
 externally managed render loop.
 
+## Layouts with more than 31 fields
+
+The legacy `fields:` argument is an integer-mask fast path and remains the
+best choice for compact layouts. For a layout with more than 31 independently
+tracked fields, derive a portable, layout-scoped selection and pass it through
+`selection:` instead:
+
+~~~dart
+final watched = layout.selectionFor(<Field<Object?>>[highIndexField]);
+
+ReactiveRecordBuilder(
+  store: store,
+  handle: handle,
+  selection: watched,
+  builder: (context, record) => Text('${record.get(highIndexField)}'),
+);
+~~~
+
+`selection:` cannot be combined with a nonzero `fields:` mask. The Flutter
+adapter passes the selection to `PulseStore`, filters the resulting committed
+changes, and coalesces their exact changed-field selection for the next frame.
+
 Use unavailableBuilder when a released record needs a lifecycle-specific
 replacement. The builder otherwise rethrows a stale-handle read error, which
 makes unexpected record lifetime violations visible during development.

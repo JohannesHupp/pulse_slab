@@ -2,6 +2,12 @@
 
 `pulse_slab` is a high-throughput reactive data plane for fixed-layout scalar state. It processes frequent writes in compact typed-memory segments, commits logical updates transactionally, and delivers only the field-level state changes that each consumer selected.
 
+Layouts of any width are supported. The existing integer mask remains the
+allocation-free filtering fast path for layouts with at most 31 fields; wider
+layouts use a portable, layout-scoped `FieldSelection`. See the core
+[field-selection guide](packages/pulse_slab/README.md#field-selection-for-wide-layouts)
+for the API and migration details.
+
 Version 0.3.0-beta.1 organizes the repository as two independently publishable packages:
 
 | Package | Purpose | Runtime dependency |

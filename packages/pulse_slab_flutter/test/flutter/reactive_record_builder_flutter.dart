@@ -150,5 +150,52 @@ void runReactiveRecordBuilderTests() {
 
       expect(find.text('record unavailable'), findsOneWidget);
     });
+
+    testWidgets('filters a selected field beyond the legacy mask limit', (
+      tester,
+    ) async {
+      final fields = List<Uint8Field>.generate(
+        33,
+        (index) => Uint8Field('field$index'),
+      );
+      final layout = RecordLayout(name: 'WideTelemetry', fields: fields);
+      final store = PulseStore();
+      final handle = store.allocate(layout);
+      addTearDown(store.dispose);
+      final watched = fields[32];
+      final selection = layout.selectionFor(<Field<Object?>>[watched]);
+      var builds = 0;
+
+      await tester.pumpWidget(
+        Directionality(
+          textDirection: TextDirection.ltr,
+          child: ReactiveRecordBuilder(
+            store: store,
+            handle: handle,
+            selection: selection,
+            builder: (context, record) {
+              builds++;
+              return Text('watched ${record.get(watched)}');
+            },
+          ),
+        ),
+      );
+
+      expect(builds, 1);
+      store.update(handle, (writer) {
+        writer.set(fields[31], 7);
+      });
+      await tester.pump();
+
+      expect(builds, 1);
+      store.update(handle, (writer) {
+        writer.set(watched, 9);
+      });
+      await tester.pump();
+
+      expect(builds, 2);
+      expect(find.text('watched 9'), findsOneWidget);
+      await tester.pumpWidget(const SizedBox.shrink());
+    });
   });
 }

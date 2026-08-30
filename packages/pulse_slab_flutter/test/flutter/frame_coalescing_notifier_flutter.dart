@@ -62,5 +62,95 @@ void runFrameCoalescingNotifierTests() {
 
       expect(notifications, 0);
     });
+
+    testWidgets('filters and coalesces portable wide selections', (
+      tester,
+    ) async {
+      final fields = List<Uint8Field>.generate(
+        33,
+        (index) => Uint8Field('field$index'),
+      );
+      final layout = RecordLayout(name: 'WideFrame', fields: fields);
+      final first = layout.selectionFor(<Field<Object?>>[fields[31]]);
+      final second = layout.selectionFor(<Field<Object?>>[fields[32]]);
+      final accepted = layout.selectionFor(<Field<Object?>>[
+        fields[31],
+        fields[32],
+      ]);
+      final ignored = layout.selectionFor(<Field<Object?>>[fields[0]]);
+      final notifier = FrameCoalescingNotifier(selection: accepted);
+      addTearDown(notifier.dispose);
+      var notifications = 0;
+      notifier.addListener(() {
+        notifications++;
+      });
+
+      notifier.markChangedSelection(ignored);
+      notifier.markChangedSelection(first);
+      notifier.markChangedSelection(second);
+
+      expect(notifier.acceptedChanges, 2);
+      expect(notifier.coalescedChanges, 1);
+      expect(notifier.pendingFieldMask, 0);
+      expect(notifier.pendingFieldSelection, isNotNull);
+      expect(notifier.pendingFieldSelection!.intersects(first), isTrue);
+      expect(notifier.pendingFieldSelection!.intersects(second), isTrue);
+
+      await tester.pump();
+
+      expect(notifications, 1);
+      expect(notifier.lastDeliveredFieldSelection, isNotNull);
+      expect(notifier.lastDeliveredFieldSelection!.intersects(first), isTrue);
+      expect(notifier.lastDeliveredFieldSelection!.intersects(second), isTrue);
+    });
+
+    test('rejects combining legacy and portable filters', () {
+      final field = Uint8Field('field');
+      final layout = RecordLayout(
+        name: 'CompactFrame',
+        fields: <Field<Object?>>[field],
+      );
+
+      expect(
+        () => FrameCoalescingNotifier(
+          fields: field.mask,
+          selection: layout.selectionFor(<Field<Object?>>[field]),
+        ),
+        throwsArgumentError,
+      );
+    });
+
+    test('rejects coalescing wide selections from different layouts', () {
+      final firstFields = List<Uint8Field>.generate(
+        32,
+        (index) => Uint8Field('first$index'),
+      );
+      final secondFields = List<Uint8Field>.generate(
+        32,
+        (index) => Uint8Field('second$index'),
+      );
+      final first = RecordLayout(name: 'FirstWideFrame', fields: firstFields);
+      final second = RecordLayout(
+        name: 'SecondWideFrame',
+        fields: secondFields,
+      );
+      final notifier = FrameCoalescingNotifier(
+        policy: FlutterDeliveryPolicy.manual,
+      );
+      addTearDown(notifier.dispose);
+
+      notifier.markChangedSelection(
+        first.selectionFor(<Field<Object?>>[firstFields.last]),
+      );
+
+      expect(
+        () => notifier.markChangedSelection(
+          second.selectionFor(<Field<Object?>>[secondFields.last]),
+        ),
+        throwsArgumentError,
+      );
+      expect(notifier.acceptedChanges, 1);
+      expect(notifier.pendingFieldSelection!.layout, same(first));
+    });
   });
 }
