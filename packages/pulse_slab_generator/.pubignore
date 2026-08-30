@@ -1,0 +1,8 @@
+# Development-only files are intentionally excluded from the pub.dev archive.
+.dart_tool/
+.pub/
+build/
+coverage/
+pubspec.lock
+test/
+pubspec_overrides.yaml

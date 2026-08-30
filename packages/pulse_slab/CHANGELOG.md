@@ -3,6 +3,12 @@
 ## 0.3.0-beta.1
 
 - Aligned the core package release line with the Flutter adapter at `0.3.0-beta.1`.
+- Added an optional `pulse_slab_generator` workflow for annotated record
+  schemas. It emits stable descriptors and precomputed layout metadata plus
+  typed access, serialization, deserialization, and validation helpers. The
+  first-party generator is available as an opt-in pub.dev development
+  dependency; the manual `RecordLayout` API remains supported with no build
+  dependency, and the generator requires Dart 3.9 or later.
 - Documented the expanded telemetry diagnostics available through the Flutter
   adapter example.
 - Added portable `FieldSelection` support for layouts with more than 31

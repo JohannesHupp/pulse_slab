@@ -144,6 +144,80 @@ the portable change representation for a wide layout. Its integer
 `fieldMask` throws. Compact journal records continue to use their integer
 mask column.
 
+## Optional generated layouts
+
+The manual `RecordLayout` and `Field` API shown above remains fully supported
+and needs no build step. For stable schemas that benefit from generated
+boilerplate, add the first-party
+[`pulse_slab_generator`](https://pub.dev/packages/pulse_slab_generator) tool.
+It is an opt-in pub.dev development dependency: `pulse_slab` has no
+`build_runner` or generator dependency and continues to support Dart 3.6 or
+later, while `pulse_slab_generator` requires Dart 3.9 or later.
+
+```yaml
+dependencies:
+  pulse_slab: ^0.3.0-beta.1
+
+dev_dependencies:
+  build_runner: ^2.14.1
+  pulse_slab_generator: ^0.3.0-beta.1
+```
+
+The generator's own README contains the full hosted and local-development
+workflow. When developing local core and generator changes outside this
+repository's Pub workspace, add development-only overrides in the consuming
+app to keep both packages on the same checkout:
+
+```yaml
+dependency_overrides:
+  pulse_slab:
+    path: ../pulse_slab/packages/pulse_slab
+  pulse_slab_generator:
+    path: ../pulse_slab/packages/pulse_slab_generator
+```
+
+Annotate an immutable schema in the core package's public API and declare its
+generated part:
+
+```dart
+import 'package:pulse_slab/pulse_slab.dart';
+
+part 'sensor_state.g.dart';
+
+@SlabRecord(byteOrder: SlabByteOrder.little)
+final class SensorState {
+  const SensorState({required this.sequence, required this.identity});
+
+  @SlabField(kind: SlabFieldKind.uint32)
+  final int sequence;
+
+  @SlabField(kind: SlabFieldKind.fixedBytes, length: 16)
+  final Uint8List identity;
+}
+```
+
+Generate the part with:
+
+```sh
+dart run build_runner build
+```
+
+The generated `SensorStateLayout` provides stable typed descriptors,
+precomputed offsets, indexes, and size metadata, plus compact masks for layouts
+through 31 fields or exact selections for wider layouts. It also provides a
+singleton `RecordLayout`, typed store reads and writes, and `serialize`,
+`deserialize`, `validate`, and `validateBytes` helpers. Its hot reads and
+writes use the generated descriptors and offsets directly, with no field-name
+lookup or runtime reflection. Supported declarations cover integer and
+floating-point scalar fields, `Uint64Value`, `bool`, and fixed-length
+`Uint8List` fields; invalid declarations are reported by `build_runner`.
+Generated source is deterministic and may be checked in. See the
+[complete generated-layout example](https://pub.dev/packages/pulse_slab_generator/example)
+for the full workflow and API. Generated records use `final` fields and an
+unnamed generative constructor with matching `this.field` initializing formals,
+so a deserializer cannot transform an encoded value while rebuilding the
+object.
+
 ## Portable unsigned 64-bit values
 
 Use `Uint64ValueField` when a value can use all 64 unsigned bits on both the
@@ -291,7 +365,9 @@ dart test -p chrome test/web_portability_test.dart
 
 ## Current limitations
 
-- Fixed record layouts are runtime descriptors; code generation is planned but not included.
+- Generated layouts are optional. Hand-authored `RecordLayout` and `Field`
+  descriptors remain the supported build-free API; projects that opt into
+  `pulse_slab_generator` need Dart 3.9 or later.
 - Integer-mask filtering is intentionally limited to compact layouts with at
   most 31 fields. Wider layouts use layout-scoped `FieldSelection` values;
   this preserves portable exactness at the cost of word-based selection work.

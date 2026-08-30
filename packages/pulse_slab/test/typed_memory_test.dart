@@ -99,6 +99,24 @@ void main() {
   });
 
   group('typed record access', () {
+    test('validates built-in values without writing record memory', () {
+      final Uint8Field uint8 = Uint8Field('uint8');
+      final Int64Field int64 = Int64Field('int64');
+      final FixedBytesField identity = FixedBytesField('identity', 4);
+
+      expect(() => uint8.validate(255), returnsNormally);
+      expect(() => uint8.validate(256), throwsRangeError);
+      expect(() => int64.validate(-1234567890123), returnsNormally);
+      expect(
+        () => identity.validate(Uint8List.fromList(<int>[1, 2, 3])),
+        throwsArgumentError,
+      );
+      expect(
+        () => identity.validate(Uint8List.fromList(<int>[1, 2, 3, 4])),
+        returnsNormally,
+      );
+    });
+
     test('round-trips every scalar type, booleans, and fixed bytes', () {
       final Int8Field int8 = Int8Field('int8');
       final Uint8Field uint8 = Uint8Field('uint8');

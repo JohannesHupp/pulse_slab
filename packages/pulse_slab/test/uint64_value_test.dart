@@ -1,5 +1,3 @@
-import 'dart:typed_data';
-
 import 'package:pulse_slab/pulse_slab.dart';
 import 'package:pulse_slab/src/segmented_memory.dart';
 import 'package:test/test.dart';

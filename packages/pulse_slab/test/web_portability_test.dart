@@ -1,5 +1,3 @@
-import 'dart:typed_data';
-
 import 'package:pulse_slab/pulse_slab.dart';
 import 'package:test/test.dart';
 

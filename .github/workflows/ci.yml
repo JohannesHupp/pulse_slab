@@ -43,6 +43,38 @@ jobs:
       - name: Run Chrome portability integration test
         run: dart test -p chrome test/web_portability_test.dart
 
+  generator_tests:
+    name: Generator source and integration tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: packages/pulse_slab_generator
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+      - name: Set up Flutter SDK for workspace resolution
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+      - name: Resolve workspace dependencies
+        run: dart pub get
+      - name: Verify formatting
+        run: dart format --output=none --set-exit-if-changed lib test example
+      - name: Analyze generator
+        run: dart analyze
+      - name: Verify checked-in generated source
+        run: |
+          dart run build_runner build
+          git diff --exit-code -- example/sensor_state.g.dart test/fixtures/all_scalar_record.g.dart test/fixtures/wide_record.g.dart
+      - name: Run generator unit and generated-source tests
+        run: dart test
+      - name: Run generated Chrome portability test
+        run: dart test -p chrome test/generated_web_portability_test.dart
+      - name: Run generated example
+        run: dart run example/main.dart
+
   flutter_adapter_tests:
     name: Flutter adapter unit and widget tests
     runs-on: ubuntu-latest
@@ -141,7 +173,9 @@ jobs:
 
   package_snapshot:
     name: Publication package snapshot
-    needs: coverage
+    needs:
+      - coverage
+      - generator_tests
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -154,10 +188,12 @@ jobs:
           cache: true
       - name: Build isolated publication snapshot
         run: dart tools/prepare_publish_packages.dart
-      - name: Verify that publication snapshot contains no examples
+      - name: Verify publication snapshot example policy
         run: |
           test ! -d publish/packages/pulse_slab/example
           test ! -d publish/packages/pulse_slab_flutter/example
+          test -d publish/packages/pulse_slab_generator/example
+          test -f publish/packages/pulse_slab_generator/build.yaml
       - name: Copy publication snapshot outside the Git checkout
         env:
           PUBLISH_WORKSPACE: ${{ runner.temp }}/pulse-slab-publish
@@ -169,6 +205,8 @@ jobs:
           test -f "$PUBLISH_WORKSPACE/pubspec.yaml"
           test ! -d "$PUBLISH_WORKSPACE/packages/pulse_slab/example"
           test ! -d "$PUBLISH_WORKSPACE/packages/pulse_slab_flutter/example"
+          test -d "$PUBLISH_WORKSPACE/packages/pulse_slab_generator/example"
+          test -f "$PUBLISH_WORKSPACE/packages/pulse_slab_generator/build.yaml"
       - name: Resolve isolated publication dependencies
         working-directory: ${{ runner.temp }}/pulse-slab-publish
         run: flutter pub get
@@ -178,6 +216,9 @@ jobs:
       - name: Validate Flutter publication archive
         working-directory: ${{ runner.temp }}/pulse-slab-publish/packages/pulse_slab_flutter
         run: flutter pub publish --dry-run
+      - name: Validate generator publication archive
+        working-directory: ${{ runner.temp }}/pulse-slab-publish/packages/pulse_slab_generator
+        run: dart pub publish --dry-run
       - name: Upload publication snapshot
         uses: actions/upload-artifact@v4
         with:
@@ -212,7 +253,7 @@ jobs:
 
           if [[ "$PREVIOUS_SHA" != "0000000000000000000000000000000000000000" ]] && \
             git diff --quiet "$PREVIOUS_SHA" "$GITHUB_SHA" -- \
-              packages/pulse_slab packages/pulse_slab_flutter; then
+              packages/pulse_slab packages/pulse_slab_generator packages/pulse_slab_flutter; then
             echo "::notice::No publishable package files changed; skipping package release tag creation."
             exit 0
           fi
@@ -223,7 +264,7 @@ jobs:
           fi
 
           declare -a tags_to_create=()
-          for package in pulse_slab pulse_slab_flutter; do
+          for package in pulse_slab pulse_slab_generator pulse_slab_flutter; do
             pubspec="packages/${package}/pubspec.yaml"
             changelog="packages/${package}/CHANGELOG.md"
             version="$(awk -F ': *' '/^version:/ { print $2; exit }' "$pubspec")"

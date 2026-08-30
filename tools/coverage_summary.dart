@@ -209,9 +209,7 @@ String _renderMarkdown(List<_PackageCoverage> packageCoverage) {
     ..writeln(
       '| Package | Lines hit | Lines found | Line coverage | Branches hit | Branches found | Branch coverage |',
     )
-    ..writeln(
-      '| --- | ---: | ---: | ---: | ---: | ---: | ---: |',
-    );
+    ..writeln('| --- | ---: | ---: | ---: | ---: | ---: | ---: |');
 
   for (final _PackageCoverage entry in packageCoverage) {
     buffer.writeln(_tableRow(entry.label, entry.metrics));
@@ -329,8 +327,10 @@ final class _LcovReader {
         case 'BRH':
         case 'FNF':
         case 'FNH':
-          _requireRecord(record, lineNumber)
-              .addDeclaredTotal(tag, value, lineNumber);
+          _requireRecord(
+            record,
+            lineNumber,
+          ).addDeclaredTotal(tag, value, lineNumber);
           break;
         case 'VER':
           if (value.trim().isEmpty) {
@@ -413,10 +413,16 @@ final class _SourceRecord {
       );
     }
     final int line = _positiveInteger(parts[0], lineNumber, 'BRDA line number');
-    final int block =
-        _nonNegativeInteger(parts[1], lineNumber, 'BRDA block number');
-    final int branch =
-        _nonNegativeInteger(parts[2], lineNumber, 'BRDA branch number');
+    final int block = _nonNegativeInteger(
+      parts[1],
+      lineNumber,
+      'BRDA block number',
+    );
+    final int branch = _nonNegativeInteger(
+      parts[2],
+      lineNumber,
+      'BRDA branch number',
+    );
     final int? hits = parts[3] == '-'
         ? null
         : _nonNegativeInteger(parts[3], lineNumber, 'BRDA taken count');
@@ -526,8 +532,9 @@ final class _SourceRecord {
       return;
     }
     final int actualFound = branchHits.length;
-    final int actualHit =
-        branchHits.values.where((int? hits) => hits != null && hits > 0).length;
+    final int actualHit = branchHits.values
+        .where((int? hits) => hits != null && hits > 0)
+        .length;
     if (declaredFound != actualFound || declaredTotals['BRH'] != actualHit) {
       throw _recordError(
         lineNumber,
