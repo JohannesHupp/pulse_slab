@@ -160,11 +160,13 @@ and semantic prerelease versions such as `0.3.0-beta.1` are marked as GitHub
 pre-releases. Versions without a prerelease suffix, such as `1.0.0`, are
 regular GitHub Releases.
 
-The creation jobs are idempotent: an existing GitHub Release for the tag is
-reused. The generator publication job also detects its already-published
-manual bootstrap version after its dry-run and skips the immutable second
-upload. If only a release-creation job fails after pub.dev publication, rerun
-that failed job; it does not rerun the immutable package upload.
+The publication and creation jobs are idempotent: an existing GitHub Release
+is reused, and every package publication job detects an already-published
+version after its dry-run and skips the immutable second upload. This also
+allows the core's manual generator-bootstrap release to receive its normal
+tag and GitHub Release later. If only a release-creation job fails after
+pub.dev publication, rerun that failed job; it does not rerun the immutable
+package upload.
 
 For tags created before this automation existed, use the **Backfill GitHub
 package releases** workflow from `main`. Provide one or more comma- or

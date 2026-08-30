@@ -67,7 +67,30 @@ jobs:
         working-directory: ${{ runner.temp }}/pulse-slab-publish/packages/pulse_slab
         run: flutter pub publish --dry-run
 
+      - name: Check whether the core version is already published
+        id: core_version
+        working-directory: ${{ runner.temp }}/pulse-slab-publish/packages/pulse_slab
+        shell: bash
+        run: |
+          version="$(awk '/^version:/ { print $2; exit }' pubspec.yaml)"
+          package_url="https://pub.dev/api/packages/pulse_slab/versions/${version}"
+          status="$(curl --silent --output /dev/null --write-out '%{http_code}' --max-time 10 "$package_url")"
+          case "$status" in
+            200)
+              echo "published=true" >> "$GITHUB_OUTPUT"
+              echo "pulse_slab ${version} already exists on pub.dev; skipping the immutable upload."
+              ;;
+            404)
+              echo "published=false" >> "$GITHUB_OUTPUT"
+              ;;
+            *)
+              echo "Could not verify pulse_slab ${version} on pub.dev (HTTP ${status})."
+              exit 1
+              ;;
+          esac
+
       - name: Publish pulse_slab
+        if: steps.core_version.outputs.published != 'true'
         working-directory: ${{ runner.temp }}/pulse-slab-publish/packages/pulse_slab
         run: flutter pub publish --force
 
@@ -370,7 +393,30 @@ jobs:
         working-directory: ${{ runner.temp }}/pulse-slab-publish/packages/pulse_slab_flutter
         run: flutter pub publish --dry-run
 
+      - name: Check whether the Flutter version is already published
+        id: flutter_version
+        working-directory: ${{ runner.temp }}/pulse-slab-publish/packages/pulse_slab_flutter
+        shell: bash
+        run: |
+          version="$(awk '/^version:/ { print $2; exit }' pubspec.yaml)"
+          package_url="https://pub.dev/api/packages/pulse_slab_flutter/versions/${version}"
+          status="$(curl --silent --output /dev/null --write-out '%{http_code}' --max-time 10 "$package_url")"
+          case "$status" in
+            200)
+              echo "published=true" >> "$GITHUB_OUTPUT"
+              echo "pulse_slab_flutter ${version} already exists on pub.dev; skipping the immutable upload."
+              ;;
+            404)
+              echo "published=false" >> "$GITHUB_OUTPUT"
+              ;;
+            *)
+              echo "Could not verify pulse_slab_flutter ${version} on pub.dev (HTTP ${status})."
+              exit 1
+              ;;
+          esac
+
       - name: Publish pulse_slab_flutter
+        if: steps.flutter_version.outputs.published != 'true'
         working-directory: ${{ runner.temp }}/pulse-slab-publish/packages/pulse_slab_flutter
         run: flutter pub publish --force
 
