@@ -94,12 +94,11 @@ Field descriptor names are metadata. Hot reads and writes use the stable descrip
 
 The manual `RecordLayout` and `Field` API shown above remains fully supported
 and needs no build step. For stable schemas that benefit from generated
-boilerplate, add the internal
-[`pulse_slab_generator`](../pulse_slab_generator/) tool from this repository.
-It is an opt-in development dependency, not a separately published pub.dev
-package: `pulse_slab` has no `build_runner` or generator dependency and
-continues to support Dart 3.6 or later, while `pulse_slab_generator` requires
-Dart 3.9 or later.
+boilerplate, add the first-party
+[`pulse_slab_generator`](https://pub.dev/packages/pulse_slab_generator) tool.
+It is an opt-in pub.dev development dependency: `pulse_slab` has no
+`build_runner` or generator dependency and continues to support Dart 3.6 or
+later, while `pulse_slab_generator` requires Dart 3.9 or later.
 
 ```yaml
 dependencies:
@@ -107,33 +106,20 @@ dependencies:
 
 dev_dependencies:
   build_runner: ^2.14.1
-  pulse_slab_generator:
-    git:
-      url: https://github.com/JohannesHupp/pulse_slab.git
-      path: packages/pulse_slab_generator
-      ref: main
+  pulse_slab_generator: ^0.3.0-beta.1
 ```
 
-For a consuming application inside or beside a checkout of this repository,
-replace the Git dependency with a local path dependency such as:
-
-```yaml
-dev_dependencies:
-  build_runner: ^2.14.1
-  pulse_slab_generator:
-    path: ../pulse_slab/packages/pulse_slab_generator
-```
-
-Pin the Git `ref` to a commit or repository tag for release builds; adjust a
-local path to match your checkout layout. The generator's own README contains
-the same workflow in full. When developing local core and generator changes
-outside this repository's Pub workspace, add a development-only override in
-the consuming app to keep them on the same checkout:
+The generator's own README contains the full hosted and local-development
+workflow. When developing local core and generator changes outside this
+repository's Pub workspace, add development-only overrides in the consuming
+app to keep both packages on the same checkout:
 
 ```yaml
 dependency_overrides:
   pulse_slab:
     path: ../pulse_slab/packages/pulse_slab
+  pulse_slab_generator:
+    path: ../pulse_slab/packages/pulse_slab_generator
 ```
 
 Annotate an immutable schema in the core package's public API and declare its
@@ -169,9 +155,9 @@ typed store reads and writes, and `serialize`, `deserialize`, `validate`, and
 and offsets directly, with no field-name lookup or runtime reflection.
 Supported declarations cover integer and floating-point scalar fields, `bool`,
 and fixed-length `Uint8List` fields; invalid declarations are reported by
-`build_runner`. Generated source is deterministic and may be checked in. See the
-[complete generated-layout example](../pulse_slab_generator/example/) for the
-full workflow and API. Generated records use `final` fields and an unnamed
+`build_runner`. Generated source is deterministic and may be checked in. See
+the [complete generated-layout example](https://pub.dev/packages/pulse_slab_generator/example)
+for the full workflow and API. Generated records use `final` fields and an unnamed
 generative constructor with matching `this.field` initializing formals, so a
 deserializer cannot transform an encoded value while rebuilding the object.
 

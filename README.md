@@ -2,23 +2,22 @@
 
 `pulse_slab` is a high-throughput reactive data plane for fixed-layout scalar state. It processes frequent writes in compact typed-memory segments, commits logical updates transactionally, and delivers only the field-level state changes that each consumer selected.
 
-Version 0.3.0-beta.1 contains two independently publishable packages and one
-internal source-generation tool:
+Version 0.3.0-beta.1 contains three independently publishable packages:
 
 | Component | Purpose | Distribution |
 | --- | --- | --- |
 | [`pulse_slab`](packages/pulse_slab) | Pure Dart data plane: layouts, typed memory, handles, transactions, journals, subscriptions, and byte-batch workers. | pub.dev |
-| [`pulse_slab_generator`](packages/pulse_slab_generator) | Optional `build_runner` companion for typed layouts, serialization, and validation source. | Internal tool; Git or local path dev dependency |
+| [`pulse_slab_generator`](packages/pulse_slab_generator) | Optional `build_runner` companion for typed layouts, serialization, and validation source. | pub.dev development dependency |
 | [`pulse_slab_flutter`](packages/pulse_slab_flutter) | Flutter UI adapter: frame-coalesced listenables and field-filtered widgets. It re-exports the core API. | pub.dev |
 
 Flutter applications can depend on `pulse_slab_flutter` alone when they want both the core and UI adapter. Dart-only services, command-line tools, and workers can depend on `pulse_slab` without pulling in Flutter.
 
 Applications opt into `pulse_slab_generator` only when they want build-time
 schema generation; hand-authored `RecordLayout` descriptors remain the
-build-free runtime API. The generator is marked `publish_to: none`; consumers
-add it from this repository with a Git dependency (including
-`path: packages/pulse_slab_generator`) or a local path dependency. Its
-[README](packages/pulse_slab_generator/README.md) shows both forms.
+build-free runtime API. The generator is published on pub.dev and belongs only
+in an application's `dev_dependencies`; it does not become a runtime
+dependency. Its [README](packages/pulse_slab_generator/README.md) shows the
+hosted installation and local development workflow.
 
 The repository is a Dart Pub workspace. It resolves the local core, generator,
 and Flutter adapter together during development. Workspace development requires
@@ -70,22 +69,22 @@ telemetry-example tests before coverage collection and publication validation.
 Generator verification includes a checked-in generated-source freshness check
 and its runnable example. The GitHub Actions summary includes a compact
 per-component coverage table, and the workflow uploads an isolated `publish/`
-artifact containing the two pub.dev packages without their examples. The
-internal generator is verified but never staged for publication.
+artifact containing all three pub.dev packages. The generator's compact,
+runnable Dart example is retained in its archive; the core and Flutter
+examples remain excluded.
 
 A verified push to `main` is a release for a publishable package: it creates
 versioned package tags and publishes the corresponding package to pub.dev
 through GitHub OIDC trusted publishing. The core is published first; the
-Flutter adapter waits for its required core version to become visible. The
-generator is checked on every change but has no tag, GitHub Release, or pub.dev
-publication step.
+Flutter adapter and generator wait for their required core version to become
+visible before publishing.
 
 The first release of each publishable package still requires the one-time
 pub.dev bootstrap and GitHub environment configuration described in [Release
 automation](docs/releasing.md). After that setup, maintainers release by
 updating the relevant package version and changelog, then merging the release
-change to `main`. The telemetry application and generator remain repository
-components and are never published.
+change to `main`. The telemetry application remains a repository component and
+is never published.
 
 Repository and issue tracker:
 
@@ -117,6 +116,7 @@ dart run build_runner build
 git diff --exit-code -- example/sensor_state.g.dart test/fixtures/all_scalar_record.g.dart
 dart test
 dart run example/main.dart
+dart pub publish --dry-run
 
 # Flutter adapter
 cd ../pulse_slab_flutter

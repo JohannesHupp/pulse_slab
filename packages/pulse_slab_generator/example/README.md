@@ -1,7 +1,7 @@
 # Generated sensor-layout example
 
-From `packages/pulse_slab_generator`, regenerate the checked-in part and run
-the example:
+From a checkout of `pulse_slab_generator` (including this repository),
+regenerate the checked-in part and run the example:
 
 ```sh
 dart run build_runner build --build-filter=example/sensor_state.g.dart

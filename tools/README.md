@@ -19,7 +19,7 @@ dart run benchmark/pulse_slab_benchmark.dart
 dart pub publish --dry-run
 ~~~
 
-Run checks for the internal generator from `packages/pulse_slab_generator`:
+Run checks for the publishable generator from `packages/pulse_slab_generator`:
 
 ~~~powershell
 cd packages/pulse_slab_generator
@@ -29,9 +29,8 @@ dart run build_runner build
 git diff --exit-code -- example/sensor_state.g.dart test/fixtures/all_scalar_record.g.dart
 dart test
 dart run example/main.dart
+dart pub publish --dry-run
 ~~~
-
-The generator is not part of publication staging or pub.dev release checks.
 
 Run Flutter adapter and telemetry example checks from
 `packages/pulse_slab_flutter` and `packages/pulse_slab_flutter/example`.
@@ -39,7 +38,7 @@ The root README contains the complete verification command set.
 
 ## Publication staging
 
-Create an isolated workspace containing only the two publishable packages:
+Create an isolated workspace containing the three publishable packages:
 
 ~~~powershell
 dart tools/prepare_publish_packages.dart
@@ -47,10 +46,12 @@ dart tools/prepare_publish_packages.dart
 
 The command replaces the repository-local `publish/` directory after checking
 that it is a safe direct child of the repository. The staged workspace contains
-`packages/pulse_slab` and `packages/pulse_slab_flutter`, excludes every
-`example` directory, and removes the adapter's nested example workspace entry.
-It is the reviewable publication artifact uploaded by CI; do not commit
-generated `publish/` output.
+`packages/pulse_slab`, `packages/pulse_slab_generator`, and
+`packages/pulse_slab_flutter`. The compact generator example is retained for
+pub.dev; the core and Flutter example directories are excluded, and the
+adapter's nested example workspace entry is removed. It is the reviewable
+publication artifact uploaded by CI; do not commit generated `publish/`
+output.
 
 CI copies this snapshot to the runner's temporary directory before resolving
 dependencies and running `flutter pub publish --dry-run`. The temporary copy
@@ -70,12 +71,15 @@ Pop-Location
 Push-Location packages/pulse_slab_flutter
 flutter pub publish --dry-run
 Pop-Location
+Push-Location packages/pulse_slab_generator
+dart pub publish --dry-run
+Pop-Location
 Pop-Location
 Remove-Item -LiteralPath $publishWorkspace -Recurse -Force
 ~~~
 
-The source package `.pubignore` files remain a second safeguard that excludes
-examples from actual pub.dev archives.
+The source package `.pubignore` files remain a second safeguard for files that
+must stay out of the actual pub.dev archives.
 
 Remove generated staging output with:
 

@@ -1,25 +1,20 @@
 # pulse_slab_generator
 
-`pulse_slab_generator` is an internal, optional build-time companion to
+`pulse_slab_generator` is the optional, first-party build-time companion to
 [`pulse_slab`](https://pub.dev/packages/pulse_slab). It emits stable typed
 field descriptors, precomputed layout metadata, store access helpers, binary
 serializers/deserializers, and validation hooks from annotated Dart records.
 
-It is intentionally **not** a separately published pub.dev package. Consume
-it from this repository with a Git or local path dependency. This keeps the
-generator's build-time toolchain out of the core package and avoids a separate
-package release lifecycle.
-
 The core package remains fully usable with hand-authored `RecordLayout` and
 `Field` descriptors. Add this package only in applications that want generated
 schemas. The generator requires Dart 3.9 or later; `pulse_slab` itself keeps
-its Dart 3.6 runtime floor and has no build-time dependencies.
+its Dart 3.6 runtime floor and has no build-time dependencies. The generator
+belongs in `dev_dependencies`, so it is never a runtime dependency of the app.
 
 ## Usage
 
-Add the runtime package normally and the builder only as a development
-dependency. Pin `ref` to a commit or a repository tag appropriate for your
-application rather than following a moving branch in a release build:
+Add matching hosted versions of the runtime package and builder. The generator
+is used only at build time:
 
 ```yaml
 dependencies:
@@ -27,33 +22,18 @@ dependencies:
 
 dev_dependencies:
   build_runner: ^2.14.1
-  pulse_slab_generator:
-    git:
-      url: https://github.com/JohannesHupp/pulse_slab.git
-      path: packages/pulse_slab_generator
-      ref: main
+  pulse_slab_generator: ^0.3.0-beta.1
 ```
 
-For an application developed in or next to a checkout of this repository, use
-the equivalent local dependency instead (adjust the relative path to match
-your repository layout):
-
-```yaml
-dev_dependencies:
-  build_runner: ^2.14.1
-  pulse_slab_generator:
-    path: ../pulse_slab/packages/pulse_slab_generator
-```
-
-The local form keeps the normal hosted `pulse_slab` dependency shown above. If
-you are changing both packages from local sources outside this repository's Pub
-workspace, add a development-only override in the consuming app so both use
-the same checkout:
+For development against a checkout, override both packages to the same local
+source. This avoids mixing unreleased generator APIs with an older hosted core:
 
 ```yaml
 dependency_overrides:
   pulse_slab:
     path: ../pulse_slab/packages/pulse_slab
+  pulse_slab_generator:
+    path: ../pulse_slab/packages/pulse_slab_generator
 ```
 
 Declare an immutable record and add a part directive:

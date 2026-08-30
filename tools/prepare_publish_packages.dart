@@ -1,10 +1,11 @@
 import 'dart:io';
 
-/// Creates an isolated Pub workspace for the two publishable packages.
+/// Creates an isolated Pub workspace for the three publishable packages.
 ///
-/// The staged workspace intentionally excludes every `example` directory. It
-/// is safe to run repeatedly: only the repository-local `publish` directory is
-/// replaced after its path and type have been validated.
+/// The staged workspace excludes examples by default, while retaining the
+/// generator's compact runnable example for its pub.dev package. It is safe to
+/// run repeatedly: only the repository-local `publish` directory is replaced
+/// after its path and type have been validated.
 void main(List<String> arguments) {
   try {
     if (arguments.length == 1 && arguments.single == '--clean') {
@@ -63,6 +64,12 @@ const List<_PackageDefinition> _packages = <_PackageDefinition>[
     stagingPath: 'packages/pulse_slab',
   ),
   _PackageDefinition(
+    name: 'pulse_slab_generator',
+    sourcePath: 'packages/pulse_slab_generator',
+    stagingPath: 'packages/pulse_slab_generator',
+    includeExample: true,
+  ),
+  _PackageDefinition(
     name: 'pulse_slab_flutter',
     sourcePath: 'packages/pulse_slab_flutter',
     stagingPath: 'packages/pulse_slab_flutter',
@@ -84,6 +91,7 @@ const Set<String> _publishableFileNames = <String>{
   '.pubignore',
   'analysis_options.yaml',
   'authors',
+  'build.yaml',
   'changelog.md',
   'code_of_conduct.md',
   'contributing.md',
@@ -242,10 +250,14 @@ void _stagePackage({
     }
 
     if (type == FileSystemEntityType.directory) {
-      if (_excludedDirectoryNames.contains(normalizedName)) {
+      final bool keepPackageExample =
+          normalizedName == 'example' && package.includeExample;
+      if (_excludedDirectoryNames.contains(normalizedName) &&
+          !keepPackageExample) {
         continue;
       }
-      if (_publishableDirectoryNames.contains(normalizedName)) {
+      if (_publishableDirectoryNames.contains(normalizedName) ||
+          keepPackageExample) {
         _copyDirectory(
           source: Directory(entry.path),
           destination: Directory(_join(destinationDirectory.path, name)),
@@ -390,10 +402,11 @@ description: Isolated publication staging workspace for the pulse_slab package f
 publish_to: none
 
 environment:
-  sdk: '>=3.6.0 <4.0.0'
+  sdk: '>=3.9.0 <4.0.0'
 
 workspace:
   - packages/pulse_slab
+  - packages/pulse_slab_generator
   - packages/pulse_slab_flutter
 ''');
 }
@@ -479,11 +492,13 @@ final class _PackageDefinition {
     required this.name,
     required this.sourcePath,
     required this.stagingPath,
+    this.includeExample = false,
   });
 
   final String name;
   final String sourcePath;
   final String stagingPath;
+  final bool includeExample;
 }
 
 final class _StagingException implements Exception {

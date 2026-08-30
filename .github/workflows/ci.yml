@@ -186,10 +186,12 @@ jobs:
           cache: true
       - name: Build isolated publication snapshot
         run: dart tools/prepare_publish_packages.dart
-      - name: Verify that publication snapshot contains no examples
+      - name: Verify publication snapshot example policy
         run: |
           test ! -d publish/packages/pulse_slab/example
           test ! -d publish/packages/pulse_slab_flutter/example
+          test -d publish/packages/pulse_slab_generator/example
+          test -f publish/packages/pulse_slab_generator/build.yaml
       - name: Copy publication snapshot outside the Git checkout
         env:
           PUBLISH_WORKSPACE: ${{ runner.temp }}/pulse-slab-publish
@@ -201,6 +203,8 @@ jobs:
           test -f "$PUBLISH_WORKSPACE/pubspec.yaml"
           test ! -d "$PUBLISH_WORKSPACE/packages/pulse_slab/example"
           test ! -d "$PUBLISH_WORKSPACE/packages/pulse_slab_flutter/example"
+          test -d "$PUBLISH_WORKSPACE/packages/pulse_slab_generator/example"
+          test -f "$PUBLISH_WORKSPACE/packages/pulse_slab_generator/build.yaml"
       - name: Resolve isolated publication dependencies
         working-directory: ${{ runner.temp }}/pulse-slab-publish
         run: flutter pub get
@@ -210,6 +214,9 @@ jobs:
       - name: Validate Flutter publication archive
         working-directory: ${{ runner.temp }}/pulse-slab-publish/packages/pulse_slab_flutter
         run: flutter pub publish --dry-run
+      - name: Validate generator publication archive
+        working-directory: ${{ runner.temp }}/pulse-slab-publish/packages/pulse_slab_generator
+        run: dart pub publish --dry-run
       - name: Upload publication snapshot
         uses: actions/upload-artifact@v4
         with:
@@ -244,7 +251,7 @@ jobs:
 
           if [[ "$PREVIOUS_SHA" != "0000000000000000000000000000000000000000" ]] && \
             git diff --quiet "$PREVIOUS_SHA" "$GITHUB_SHA" -- \
-              packages/pulse_slab packages/pulse_slab_flutter; then
+              packages/pulse_slab packages/pulse_slab_generator packages/pulse_slab_flutter; then
             echo "::notice::No publishable package files changed; skipping package release tag creation."
             exit 0
           fi
@@ -255,7 +262,7 @@ jobs:
           fi
 
           declare -a tags_to_create=()
-          for package in pulse_slab pulse_slab_flutter; do
+          for package in pulse_slab pulse_slab_generator pulse_slab_flutter; do
             pubspec="packages/${package}/pubspec.yaml"
             changelog="packages/${package}/CHANGELOG.md"
             version="$(awk -F ': *' '/^version:/ { print $2; exit }' "$pubspec")"

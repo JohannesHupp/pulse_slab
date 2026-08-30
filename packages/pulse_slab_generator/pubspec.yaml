@@ -1,9 +1,6 @@
 name: pulse_slab_generator
 description: Optional build-time layout generation for typed Pulse Slab records.
 version: 0.3.0-beta.1
-# This builder is distributed from this repository through a Git or path
-# dependency. It is intentionally not a separately published pub.dev package.
-publish_to: none
 resolution: workspace
 repository: https://github.com/JohannesHupp/pulse_slab
 issue_tracker: https://github.com/JohannesHupp/pulse_slab/issues

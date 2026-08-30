@@ -8,8 +8,9 @@ guarantees documented in this repository.
 
 ## Optional generated layouts
 
-The internal
-[`pulse_slab_generator`](../packages/pulse_slab_generator/) tool now provides
+The first-party
+[`pulse_slab_generator`](https://pub.dev/packages/pulse_slab_generator) package
+now provides
 an optional `build_runner` workflow for annotated immutable schemas. It emits
 stable field descriptors, precomputed layout metadata, typed store accessors,
 serializers, deserializers, and validation hooks for supported scalar and
@@ -18,12 +19,11 @@ directly rather than using field-name lookup or runtime reflection.
 
 This workflow is deliberately not required: hand-authored `RecordLayout` and
 `Field` descriptors remain supported, and the core package keeps no generator
-or build-time dependency. The generator is `publish_to: none`, so applications
-add it as a Git dependency with `path: packages/pulse_slab_generator` (or as a
-local path dependency when working from a checkout). The core supports Dart
-3.6 or later; applications that add `pulse_slab_generator` need Dart 3.9 or
-later. Its [complete example](../packages/pulse_slab_generator/example/)
-documents the declaration and generation command.
+or build-time dependency. Applications add the generator from pub.dev as a
+development dependency. The core supports Dart 3.6 or later; applications
+that add `pulse_slab_generator` need Dart 3.9 or later. Its
+[complete example](../packages/pulse_slab_generator/example/) documents the
+declaration and generation command.
 
 Potential future work includes:
 
