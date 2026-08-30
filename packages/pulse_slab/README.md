@@ -27,7 +27,7 @@ Use the release version selected on pub.dev:
 
 ```yaml
 dependencies:
-  pulse_slab: ^0.2.0-beta.2
+  pulse_slab: ^0.3.0-beta.1
 ```
 
 For local development in this repository, point a consuming package at `../packages/pulse_slab`.
@@ -124,7 +124,7 @@ API:
 
 ~~~yaml
 dependencies:
-  pulse_slab_flutter: ^0.2.0-beta.2
+  pulse_slab_flutter: ^0.3.0-beta.1
 ~~~
 
 ~~~dart

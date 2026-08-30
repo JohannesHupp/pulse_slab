@@ -1,6 +1,6 @@
 name: pulse_slab_flutter
 description: Frame-coalesced Flutter bindings for the pulse_slab typed-memory reactive data store.
-version: 0.2.0-beta.2
+version: 0.3.0-beta.1
 resolution: workspace
 repository: https://github.com/JohannesHupp/pulse_slab
 issue_tracker: https://github.com/JohannesHupp/pulse_slab/issues
@@ -17,7 +17,7 @@ environment:
 dependencies:
   flutter:
     sdk: flutter
-  pulse_slab: ^0.2.0-beta.2
+  pulse_slab: ^0.3.0-beta.1
 
 dev_dependencies:
   flutter_lints: ^5.0.0

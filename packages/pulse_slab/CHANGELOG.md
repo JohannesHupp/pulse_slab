@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.3.0-beta.1
+
+- Aligned the core package release line with the Flutter adapter at `0.3.0-beta.1`.
+- Documented the expanded telemetry diagnostics available through the Flutter
+  adapter example.
+
 ## 0.2.0-beta.2
 
 - Prepare the next prerelease after the initial manual pub.dev bootstrap

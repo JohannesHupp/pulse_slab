@@ -138,8 +138,9 @@ continues with the package-specific tag namespace.
 After a package has been successfully published to pub.dev, the matching
 tag-triggered workflow creates one GitHub Release for the same package tag. The
 release title is `<package> <version>`, its notes link to the package changelog,
-and semantic prerelease versions such as `0.2.0-beta.2` are marked as GitHub
-pre-releases. Stable versions such as `1.0.0` are regular GitHub Releases.
+and semantic prerelease versions such as `0.3.0-beta.1` are marked as GitHub
+pre-releases. Versions without a prerelease suffix, such as `1.0.0`, are
+regular GitHub Releases.
 
 The creation jobs are idempotent: an existing GitHub Release for the tag is
 reused. If only a release-creation job fails after pub.dev publication, rerun
@@ -150,7 +151,7 @@ package releases** workflow from `main`. Provide one or more comma- or
 whitespace-separated package tags, for example:
 
 ~~~text
-pulse_slab-v0.2.0-beta.2,pulse_slab_flutter-v0.2.0-beta.2
+pulse_slab-v0.3.0-beta.1,pulse_slab_flutter-v0.3.0-beta.1
 ~~~
 
 The backfill workflow validates that each tag exists, creates only missing
@@ -158,12 +159,12 @@ GitHub Releases, and never calls pub.dev.
 
 ## Version policy
 
-The current published prerelease is `0.2.0-beta.2`. The initial
-`0.2.0-beta.1` releases were published manually to create the pub.dev package
-records required before trusted publishing can be enabled. Subsequent pre-1.0
-development releases use numbered semantic prerelease identifiers such as
-`0.2.0-beta.3`; numbering makes beta releases unambiguous and preserves normal
-Pub version ordering.
+The latest published version is `0.2.0-beta.2`; this repository revision
+prepares `0.3.0-beta.1`. The initial `0.2.0-beta.1` releases were published manually
+to create the pub.dev package records required before trusted publishing can be
+enabled. The current `0.3.0-beta.1` version creates a GitHub pre-release. A
+version without a prerelease suffix, such as `1.0.0`, creates a regular GitHub
+Release.
 
 The first stable public release is planned as `1.0.0`, without a `-beta`
 suffix. Once that version is released, it is immutable on pub.dev. Later
