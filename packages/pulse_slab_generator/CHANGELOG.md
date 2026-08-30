@@ -4,6 +4,13 @@
 `pulse_slab`. It is released independently on pub.dev and used only as a
 development dependency.
 
+## 0.3.0-beta.2
+
+- Fixed compatibility with the current analyzer element API used by pub.dev
+  package analysis.
+- Declared the native development platforms supported by the build-time
+  generator. Generated layouts remain portable to all `pulse_slab` targets.
+
 ## 0.3.0-beta.1
 
 - Added optional annotation-driven generation of Pulse Slab layouts, typed
