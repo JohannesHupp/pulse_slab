@@ -24,6 +24,14 @@ store is disposed. This trades a predictable high-water allocation for steady
 state reuse; isolate unusually large bulk transactions in a short-lived store
 when retaining that capacity would be undesirable.
 
+`Uint64ValueField` compares its two stored 32-bit words directly before a
+write, so an unchanged write does not materialize a `Uint64Value`. A field read
+does return one immutable value object, and `Uint64Value.toBytes` intentionally
+allocates its eight-byte wire representation. Treat byte conversion as a
+serialization boundary rather than a hot storage access. The core benchmark
+includes a portable unsigned 64-bit field read/write workload using the high
+bit and maximum values.
+
 ## Batching and coalescing
 
 Use an explicit transaction when multiple field writes form one logical update. The store compares values where practical and omits a commit when no field has a net change:
@@ -58,7 +66,12 @@ cd packages/pulse_slab
 dart run benchmark/pulse_slab_benchmark.dart
 ```
 
-The suite covers sequential typed writes, random record updates, transaction throughput, unfiltered and field-filtered dispatch, frame-style coalescing, slot reuse, an object-model baseline, and a small notifier-style baseline. It reports elapsed time, operations per second, notifications, and coalesced notifications. Allocation and memory fields are reported only when the runtime exposes measured values.
+The suite covers sequential typed writes, portable unsigned 64-bit field
+read/write, random record updates, transaction throughput, unfiltered and
+field-filtered dispatch, frame-style coalescing, slot reuse, an object-model
+baseline, and a small notifier-style baseline. It reports elapsed time,
+operations per second, notifications, and coalesced notifications. Allocation
+and memory fields are reported only when the runtime exposes measured values.
 
 Benchmark output is machine-, SDK-, build-mode-, and workload-dependent. Treat it as a regression signal rather than a package-wide performance claim.
 

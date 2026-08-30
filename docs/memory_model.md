@@ -8,7 +8,19 @@ A `RecordLayout` describes a fixed-size binary record. Typed field descriptors d
 
 The core supports signed and unsigned 8-, 16-, 32-, and 64-bit integers, 32- and 64-bit floating-point values, boolean or bit-flag fields, and fixed-size byte fields. Numeric access uses `dart:typed_data` views and `ByteData` with explicit endianness. Bulk numeric storage does not rely on `List<int>` or `List<double>`.
 
-`Int64Field` and `Uint64Field` are encoded as two 32-bit words, avoiding unsupported 64-bit `ByteData` accessors on Dart JavaScript targets. Dart VM `int` values are signed at this width, so a `Uint64Field` read whose top bit is set is represented as a two's-complement negative value. Treat it as a raw 64-bit bit pattern, or use a fixed byte field when application code needs portable unsigned arithmetic beyond the signed range. JavaScript targets cannot represent every 64-bit `int` exactly, so a fixed byte field is the portable choice for full-width identifiers or counters in Flutter web. Record versions stop at the portable exact-integer maximum (`2^53 - 1`) rather than wrapping, preserving monotonic ordering on native and web targets.
+`Int64Field` and legacy `Uint64Field` are encoded as two 32-bit words, avoiding unsupported 64-bit `ByteData` accessors on Dart JavaScript targets. `Uint64Field` deliberately retains its signed two's-complement `int` bit-pattern behavior: a read whose top bit is set is negative. That preserves existing applications, but JavaScript targets cannot exactly represent every 64-bit `int`.
+
+Use `Uint64ValueField` when new data needs portable full-width unsigned semantics. Its `Uint64Value` keeps bits 63–32 in `highWord` and bits 31–0 in `lowWord`; both are validated unsigned 32-bit values, and the API never combines them into one 64-bit Dart `int`. It compares high word then low word, and its `toBytes`/`fromBytes` methods use an explicit matching `Endian` at a wire boundary.
+
+```dart
+final counter = Uint64ValueField('counter');
+writer.set(
+  counter,
+  Uint64Value.fromWords(highWord: 0x80000000, lowWord: 0),
+);
+```
+
+Record versions stop at the portable exact-integer maximum (`2^53 - 1`) rather than wrapping, preserving monotonic ordering on native and web targets.
 
 Record offsets, record sizes, and segment byte allocations are bounded to the positive 32-bit typed-data range (`2^31 - 1` bytes). The store rejects a layout or segment configuration that exceeds that range before it attempts the allocation.
 

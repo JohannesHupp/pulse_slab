@@ -5,6 +5,9 @@
 - Aligned the core package release line with the Flutter adapter at `0.3.0-beta.1`.
 - Documented the expanded telemetry diagnostics available through the Flutter
   adapter example.
+- Added `Uint64Value` and `Uint64ValueField` for exact portable unsigned
+  64-bit values on Dart VM and web targets, while retaining legacy
+  `Uint64Field` raw signed two's-complement compatibility.
 
 ## 0.2.0-beta.2
 
