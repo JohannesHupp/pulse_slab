@@ -12,6 +12,14 @@ Repository-level changes are summarized here. Each publishable package maintains
 - Add an idempotent manual workflow for backfilling GitHub Releases for existing
   package tags without calling pub.dev again.
 
+## 0.3.0-beta.1
+
+- Expanded the Flutter telemetry example with clearer state-update diagnostics,
+  sensor history views, and a rendered FPS indicator.
+- Added deterministic telemetry-example coverage and documentation for the
+  updated diagnostics.
+- Stabilized line endings for tracked Flutter desktop registrant files.
+
 ## 0.2.0-beta.2
 
 - Prepare the first tag-triggered pub.dev publication after the manual

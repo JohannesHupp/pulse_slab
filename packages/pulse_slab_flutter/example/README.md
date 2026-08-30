@@ -11,9 +11,23 @@ flutter run
 ```
 
 Use **Start**, **Pause**, **Reset**, and the rate slider to control the source.
-The dashboard reports processed input updates, frame-delivered UI updates,
-coalesced UI updates, widget rebuilds, journal utilization, bounded-journal
-overwrites, and intentionally capped simulation batches.
+The dashboard distinguishes raw producer inputs, net committed record changes,
+transaction-compacted inputs, frame deliveries, frame-coalesced changes, widget
+rebuilds, journal utilization, journal overwrites or rejections, and
+intentionally capped simulation batches.
+
+The default **Merged transaction** mode processes a tick as one transaction,
+so repeated writes to one sensor become one net record change. Select **Burst
+transactions** to split a tick into several synchronous commits before Flutter
+can flush a frame; the **Frame coalesced** metric then shows the extra commits
+merged into one UI delivery.
+
+The default **Sample and clear** journal mode records a 250 ms observation
+window and clears it after the dashboard reads it. A steady percentage in that
+mode is expected and does not represent a growing backlog. Select **Overwrite
+pressure** or **Reject-newest pressure** to retain a small 64-entry journal and
+observe its fixed-capacity policy. In reject-newest mode, state commits continue
+even when new journal observations are rejected.
 
 The simulation processes up to 32,768 updates in one timer tick. At very high
 rates, excess requested updates are reported as simulation drops so the example
@@ -24,10 +38,12 @@ subscribe to temperature and status together. This makes it visible that a
 pressure-only write does not rebuild either card type, while the core store can
 continue processing every generated update.
 
-The temperature line is drawn with `CustomPainter` and a fixed `Float32List`
-ring buffer, so the example does not add a chart package or a high-allocation
-history model.
+Each sensor view includes a temperature history chart.
 
-The dashboard samples then clears the replaceable state journal for display.
-It is not a lossless domain-event consumer; applications needing acknowledged
-events should use a separate bounded, backpressured event protocol.
+The top-right FPS indicator reports a recent rendered frame rate while the
+simulation is running. It is most useful in profile or release mode; `FPS --`
+means no current measurement is available.
+
+The journal is a replaceable state-observation channel, not a lossless
+domain-event consumer. Applications needing acknowledged events should use a
+separate bounded, backpressured event protocol.

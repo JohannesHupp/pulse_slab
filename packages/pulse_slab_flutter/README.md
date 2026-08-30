@@ -12,7 +12,7 @@ Add the adapter to a Flutter application:
 
 ~~~yaml
 dependencies:
-  pulse_slab_flutter: ^0.2.0-beta.2
+  pulse_slab_flutter: ^0.3.0-beta.1
 ~~~
 
 The adapter depends on pulse_slab and re-exports its public Dart API. Import one
@@ -23,7 +23,7 @@ import 'package:pulse_slab_flutter/pulse_slab_flutter.dart';
 ~~~
 
 For local development in this repository, run `dart pub get` from the
-repository root. Its Pub workspace resolves the adjacent 0.2.0-beta.2 core package
+repository root. Its Pub workspace resolves the adjacent 0.3.0-beta.1 core package
 without an override file. The repository release automation publishes
 `pulse_slab` before this adapter and waits until the required core version is
 available from pub.dev.
@@ -70,9 +70,13 @@ makes unexpected record lifetime violations visible during development.
   only.
 
 The [telemetry example](example) drives multiple records at configurable rates
-up to 1,000,000 updates per second. It shows processed updates, frame-delivered
-UI updates, coalescing, widget rebuilds, journal utilization, and bounded
-simulation drops.
+up to 1,000,000 updates per second. It distinguishes raw producer inputs,
+net committed record changes, transaction compaction, frame delivery,
+frame coalescing, widget rebuilds, and bounded journal behavior. Its controls
+also demonstrate why a sampled-and-cleared journal can show stable utilization
+while a retained pressure journal eventually overwrites or rejects observations.
+The example also includes per-sensor charts and an FPS indicator for inspecting
+UI behavior at high input rates.
 
 ## Limitations
 

@@ -2,23 +2,12 @@ import 'dart:async';
 import 'dart:math' as math;
 import 'dart:typed_data';
 
+import 'package:flutter/foundation.dart' show ValueListenable;
 import 'package:flutter/material.dart';
 import 'package:pulse_slab_flutter/pulse_slab_flutter.dart';
 
-final Float64Field _timestampField = Float64Field('timestamp');
-final Float32Field _temperatureField = Float32Field('temperature');
-final Float32Field _pressureField = Float32Field('pressure');
-final Uint16Field _statusField = Uint16Field('status');
-
-final RecordLayout _telemetryLayout = RecordLayout(
-  name: 'TelemetryRecord',
-  fields: <Field<Object?>>[
-    _timestampField,
-    _temperatureField,
-    _pressureField,
-    _statusField,
-  ],
-);
+import 'src/frame_rate_monitor.dart';
+import 'src/telemetry_simulation.dart';
 
 void main() {
   runApp(const PulseSlabTelemetryApp());
@@ -59,19 +48,17 @@ class _TelemetryDashboardState extends State<_TelemetryDashboard> {
   static const int _maximumUpdatesPerSecond = 1000000;
   static const int _maximumTickBatch = 32768;
 
-  final math.Random _random = math.Random(7);
   final Stopwatch _clock = Stopwatch();
   final ValueNotifier<int> _metricsTick = ValueNotifier<int>(0);
-  final _TelemetryHistory _history = _TelemetryHistory(capacity: 180);
 
-  late PulseStore _store;
-  late List<RecordHandle> _handles;
+  late TelemetrySimulation _simulation;
+  late TelemetryJournalSample _lastJournalSample;
   late _UiDeliveryMeter _uiDeliveryMeter;
+  late final FrameRateMonitor _frameRateMonitor;
   Timer? _inputTimer;
   Timer? _metricsTimer;
   var _isRunning = false;
   var _targetUpdatesPerSecond = 6000;
-  var _processedUpdates = 0;
   var _simulatedSourceDrops = 0;
   var _widgetRebuilds = 0;
   var _lastReportedProcessedUpdates = 0;
@@ -79,11 +66,13 @@ class _TelemetryDashboardState extends State<_TelemetryDashboard> {
   var _lastRateReportMicroseconds = 0;
   var _rateRemainder = 0;
   var _visibleUpdateRate = 0.0;
-  var _lastJournalUtilization = 0.0;
+  var _transactionMode = TelemetryTransactionMode.merged;
+  var _journalMode = TelemetryJournalMode.sampled;
 
   @override
   void initState() {
     super.initState();
+    _frameRateMonitor = FrameRateMonitor();
     _createDataPlane();
     _metricsTimer = Timer.periodic(
       const Duration(milliseconds: 250),
@@ -92,19 +81,22 @@ class _TelemetryDashboardState extends State<_TelemetryDashboard> {
   }
 
   void _createDataPlane() {
-    _store = PulseStore(segmentCapacity: 128, journalCapacity: 1024);
-    _handles = List<RecordHandle>.generate(
-      _sensorCount,
-      (_) => _store.allocate(_telemetryLayout),
-      growable: false,
+    _simulation = TelemetrySimulation(
+      configuration: TelemetrySimulationConfiguration(
+        sensorCount: _sensorCount,
+        transactionMode: _transactionMode,
+        journalMode: _journalMode,
+      ),
     );
-    _uiDeliveryMeter = _UiDeliveryMeter(_store, _handles);
+    _lastJournalSample = _simulation.sampleJournal();
+    _uiDeliveryMeter = _UiDeliveryMeter();
   }
 
   void _start() {
     if (_isRunning) {
       return;
     }
+    _frameRateMonitor.start();
     _clock.start();
     _lastInputTickMicroseconds = _clock.elapsedMicroseconds;
     _lastRateReportMicroseconds = _clock.elapsedMicroseconds;
@@ -123,6 +115,7 @@ class _TelemetryDashboardState extends State<_TelemetryDashboard> {
     }
     _inputTimer?.cancel();
     _inputTimer = null;
+    _frameRateMonitor.stop();
     _clock.stop();
     setState(() {
       _isRunning = false;
@@ -130,19 +123,24 @@ class _TelemetryDashboardState extends State<_TelemetryDashboard> {
     });
   }
 
-  void _reset() {
+  void _reset({
+    TelemetryTransactionMode? transactionMode,
+    TelemetryJournalMode? journalMode,
+  }) {
     final resumeAfterReset = _isRunning;
     _pause();
-    _uiDeliveryMeter.dispose();
-    _store.dispose();
+    if (transactionMode != null) {
+      _transactionMode = transactionMode;
+    }
+    if (journalMode != null) {
+      _journalMode = journalMode;
+    }
+    _simulation.dispose();
     _createDataPlane();
-    _history.clear();
-    _processedUpdates = 0;
     _simulatedSourceDrops = 0;
     _widgetRebuilds = 0;
     _lastReportedProcessedUpdates = 0;
     _visibleUpdateRate = 0.0;
-    _lastJournalUtilization = 0.0;
     _rateRemainder = 0;
     _clock.reset();
     _lastInputTickMicroseconds = 0;
@@ -174,27 +172,10 @@ class _TelemetryDashboardState extends State<_TelemetryDashboard> {
     }
 
     final timestamp = nowMicroseconds / Duration.microsecondsPerSecond;
-    _store.transaction((transaction) {
-      for (var update = 0; update < updateCount; update++) {
-        final sensorIndex = _random.nextInt(_sensorCount);
-        final phase = timestamp * (0.8 + sensorIndex * 0.03) + sensorIndex;
-        final temperature = 23.0 + math.sin(phase) * 7.0 + _random.nextDouble();
-        final pressure = 1.0 + math.cos(phase * 0.5) * 0.12;
-        final status = (temperature > 28.5 ? 0x01 : 0) |
-            (pressure < 0.93 ? 0x02 : 0) |
-            (_random.nextInt(80) == 0 ? 0x04 : 0);
-        final writer = transaction.write(_handles[sensorIndex]);
-        writer
-          ..set(_timestampField, timestamp)
-          ..set(_temperatureField, temperature)
-          ..set(_pressureField, pressure)
-          ..set(_statusField, status);
-        if (sensorIndex == 0) {
-          _history.add(temperature);
-        }
-      }
-    });
-    _processedUpdates += updateCount;
+    _simulation.processBatch(
+      rawInputCount: updateCount,
+      timestamp: timestamp,
+    );
   }
 
   void _refreshMetrics() {
@@ -204,17 +185,14 @@ class _TelemetryDashboardState extends State<_TelemetryDashboard> {
     final nowMicroseconds = _clock.elapsedMicroseconds;
     final elapsedMicroseconds = nowMicroseconds - _lastRateReportMicroseconds;
     if (elapsedMicroseconds > 0) {
-      _visibleUpdateRate = (_processedUpdates - _lastReportedProcessedUpdates) *
-          Duration.microsecondsPerSecond /
-          elapsedMicroseconds;
+      _visibleUpdateRate =
+          (_simulation.rawInputUpdateCount - _lastReportedProcessedUpdates) *
+              Duration.microsecondsPerSecond /
+              elapsedMicroseconds;
     }
-    _lastReportedProcessedUpdates = _processedUpdates;
+    _lastReportedProcessedUpdates = _simulation.rawInputUpdateCount;
     _lastRateReportMicroseconds = nowMicroseconds;
-    _lastJournalUtilization = _store.journal.utilization;
-    // This dashboard treats the journal as a sampled state monitor. It clears
-    // replaceable state changes after observing utilization; it is not a
-    // lossless domain-event consumer.
-    _store.journal.clear();
+    _lastJournalSample = _simulation.sampleJournal();
     _metricsTick.value++;
   }
 
@@ -222,8 +200,8 @@ class _TelemetryDashboardState extends State<_TelemetryDashboard> {
   void dispose() {
     _inputTimer?.cancel();
     _metricsTimer?.cancel();
-    _uiDeliveryMeter.dispose();
-    _store.dispose();
+    _frameRateMonitor.dispose();
+    _simulation.dispose();
     _metricsTick.dispose();
     super.dispose();
   }
@@ -236,7 +214,18 @@ class _TelemetryDashboardState extends State<_TelemetryDashboard> {
         actions: <Widget>[
           Padding(
             padding: const EdgeInsetsDirectional.only(end: 16),
-            child: Center(child: _RunningBadge(isRunning: _isRunning)),
+            child: Center(
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: <Widget>[
+                  _FrameRateBadge(
+                    framesPerSecond: _frameRateMonitor.framesPerSecond,
+                  ),
+                  const SizedBox(width: 12),
+                  _RunningBadge(isRunning: _isRunning),
+                ],
+              ),
+            ),
           ),
         ],
       ),
@@ -254,13 +243,17 @@ class _TelemetryDashboardState extends State<_TelemetryDashboard> {
               ValueListenableBuilder<int>(
                 valueListenable: _metricsTick,
                 builder: (context, _, child) => _MetricGrid(
-                  processedUpdates: _processedUpdates,
+                  rawInputUpdates: _simulation.rawInputUpdateCount,
+                  committedRecordChanges:
+                      _simulation.committedRecordChangeCount,
+                  transactionCompactedInputs:
+                      _simulation.transactionCompactedInputCount,
+                  lastTickDistinctRecords: _simulation.lastTickDistinctRecords,
                   updateRate: _visibleUpdateRate,
-                  uiDeliveredUpdates: _uiDeliveryMeter.deliveredUpdates,
-                  coalescedUiUpdates: _uiDeliveryMeter.coalescedUpdates,
+                  frameDeliveredUpdates: _uiDeliveryMeter.deliveredUpdates,
+                  frameCoalescedUpdates: _uiDeliveryMeter.coalescedUpdates,
                   widgetRebuilds: _widgetRebuilds,
-                  journalUtilization: _lastJournalUtilization,
-                  journalOverwrites: _store.journal.overwrittenCount,
+                  journalSample: _lastJournalSample,
                   sourceDrops: _simulatedSourceDrops,
                 ),
               ),
@@ -271,9 +264,17 @@ class _TelemetryDashboardState extends State<_TelemetryDashboard> {
                 minimumUpdatesPerSecond: _minimumUpdatesPerSecond,
                 maximumUpdatesPerSecond: _maximumUpdatesPerSecond,
                 maximumTickBatch: _maximumTickBatch,
+                transactionMode: _transactionMode,
+                journalMode: _journalMode,
                 onStart: _start,
                 onPause: _pause,
                 onReset: _reset,
+                onTransactionModeChanged: (mode) {
+                  _reset(transactionMode: mode);
+                },
+                onJournalModeChanged: (mode) {
+                  _reset(journalMode: mode);
+                },
                 onRateChanged: (value) {
                   setState(() {
                     _targetUpdatesPerSecond = value.round();
@@ -281,19 +282,26 @@ class _TelemetryDashboardState extends State<_TelemetryDashboard> {
                 },
               ),
               const SizedBox(height: 16),
-              ValueListenableBuilder<int>(
-                valueListenable: _metricsTick,
-                builder: (context, _, child) => _ChartCard(history: _history),
+              _MetricExplanationCard(
+                transactionMode: _transactionMode,
+                journalMode: _journalMode,
               ),
               const SizedBox(height: 16),
               Text(
-                'Field-filtered record views',
+                'All 24 field-filtered sensor views',
                 style: Theme.of(context).textTheme.titleLarge,
               ),
+              const SizedBox(height: 4),
+              const Text(
+                'This two-column, non-virtualized grid intentionally keeps '
+                'all 24 charts and subscriptions mounted to create visible '
+                'UI load.',
+              ),
               const SizedBox(height: 8),
-              _SensorCards(
-                store: _store,
-                handles: _handles,
+              _SensorTelemetryGrid(
+                store: _simulation.store,
+                handles: _simulation.handles,
+                deliveryMeter: _uiDeliveryMeter,
                 onReactiveBuild: () {
                   _widgetRebuilds++;
                 },
@@ -325,25 +333,56 @@ class _RunningBadge extends StatelessWidget {
   }
 }
 
+class _FrameRateBadge extends StatelessWidget {
+  const _FrameRateBadge({required this.framesPerSecond});
+
+  final ValueListenable<int?> framesPerSecond;
+
+  @override
+  Widget build(BuildContext context) {
+    return ValueListenableBuilder<int?>(
+      valueListenable: framesPerSecond,
+      builder: (context, framesPerSecond, child) {
+        final label =
+            framesPerSecond == null ? 'FPS --' : 'FPS $framesPerSecond';
+        return Semantics(
+          label: framesPerSecond == null
+              ? 'Rendered frame rate is not currently sampled.'
+              : 'Rendered frame rate: $framesPerSecond frames per second.',
+          child: Tooltip(
+            message:
+                'Rendered frame-rate estimate from completed Flutter frames.',
+            child: Text(label),
+          ),
+        );
+      },
+    );
+  }
+}
+
 class _MetricGrid extends StatelessWidget {
   const _MetricGrid({
-    required this.processedUpdates,
+    required this.rawInputUpdates,
+    required this.committedRecordChanges,
+    required this.transactionCompactedInputs,
+    required this.lastTickDistinctRecords,
     required this.updateRate,
-    required this.uiDeliveredUpdates,
-    required this.coalescedUiUpdates,
+    required this.frameDeliveredUpdates,
+    required this.frameCoalescedUpdates,
     required this.widgetRebuilds,
-    required this.journalUtilization,
-    required this.journalOverwrites,
+    required this.journalSample,
     required this.sourceDrops,
   });
 
-  final int processedUpdates;
+  final int rawInputUpdates;
+  final int committedRecordChanges;
+  final int transactionCompactedInputs;
+  final int lastTickDistinctRecords;
   final double updateRate;
-  final int uiDeliveredUpdates;
-  final int coalescedUiUpdates;
+  final int frameDeliveredUpdates;
+  final int frameCoalescedUpdates;
   final int widgetRebuilds;
-  final double journalUtilization;
-  final int journalOverwrites;
+  final TelemetryJournalSample journalSample;
   final int sourceDrops;
 
   @override
@@ -353,15 +392,26 @@ class _MetricGrid extends StatelessWidget {
       runSpacing: 10,
       children: <Widget>[
         _MetricTile('Input rate', '${updateRate.toStringAsFixed(0)} / s'),
-        _MetricTile('Processed updates', '$processedUpdates'),
-        _MetricTile('UI deliveries', '$uiDeliveredUpdates'),
-        _MetricTile('UI coalesced', '$coalescedUiUpdates'),
+        _MetricTile('Raw inputs', '$rawInputUpdates'),
+        _MetricTile('Committed records', '$committedRecordChanges'),
+        _MetricTile(
+          'Transaction-compacted inputs',
+          '$transactionCompactedInputs',
+        ),
+        _MetricTile('Distinct records / tick', '$lastTickDistinctRecords'),
+        _MetricTile('Frame deliveries', '$frameDeliveredUpdates'),
+        _MetricTile('Frame coalesced', '$frameCoalescedUpdates'),
         _MetricTile('Widget rebuilds', '$widgetRebuilds'),
         _MetricTile(
           'Journal utilization',
-          '${(journalUtilization * 100).toStringAsFixed(0)}%',
+          '${(journalSample.utilization * 100).toStringAsFixed(0)}%',
         ),
-        _MetricTile('Journal overwrites', '$journalOverwrites'),
+        _MetricTile(
+          'Journal retained',
+          '${journalSample.length} / ${journalSample.capacity}',
+        ),
+        _MetricTile('Journal overwrites', '${journalSample.overwrittenCount}'),
+        _MetricTile('Journal rejected', '${journalSample.rejectedCount}'),
         _MetricTile('Simulation drops', '$sourceDrops'),
       ],
     );
@@ -411,9 +461,13 @@ class _ControlCard extends StatelessWidget {
     required this.minimumUpdatesPerSecond,
     required this.maximumUpdatesPerSecond,
     required this.maximumTickBatch,
+    required this.transactionMode,
+    required this.journalMode,
     required this.onStart,
     required this.onPause,
     required this.onReset,
+    required this.onTransactionModeChanged,
+    required this.onJournalModeChanged,
     required this.onRateChanged,
   });
 
@@ -422,9 +476,13 @@ class _ControlCard extends StatelessWidget {
   final int minimumUpdatesPerSecond;
   final int maximumUpdatesPerSecond;
   final int maximumTickBatch;
+  final TelemetryTransactionMode transactionMode;
+  final TelemetryJournalMode journalMode;
   final VoidCallback onStart;
   final VoidCallback onPause;
   final VoidCallback onReset;
+  final ValueChanged<TelemetryTransactionMode> onTransactionModeChanged;
+  final ValueChanged<TelemetryJournalMode> onJournalModeChanged;
   final ValueChanged<double> onRateChanged;
 
   @override
@@ -497,6 +555,53 @@ class _ControlCard extends StatelessWidget {
               'reported as simulation drops.',
               style: Theme.of(context).textTheme.labelSmall,
             ),
+            const SizedBox(height: 16),
+            Text(
+              'Transaction mode',
+              style: Theme.of(context).textTheme.labelMedium,
+            ),
+            const SizedBox(height: 6),
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: <Widget>[
+                for (final mode in TelemetryTransactionMode.values)
+                  ChoiceChip(
+                    label: Text(mode.label),
+                    selected: transactionMode == mode,
+                    onSelected: (_) => onTransactionModeChanged(mode),
+                  ),
+              ],
+            ),
+            const SizedBox(height: 6),
+            Text(
+              transactionMode.description,
+              style: Theme.of(context).textTheme.labelSmall,
+            ),
+            const SizedBox(height: 16),
+            Text(
+              'Journal observation mode',
+              style: Theme.of(context).textTheme.labelMedium,
+            ),
+            const SizedBox(height: 6),
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: <Widget>[
+                for (final mode in TelemetryJournalMode.values)
+                  ChoiceChip(
+                    label: Text(mode.label),
+                    selected: journalMode == mode,
+                    onSelected: (_) => onJournalModeChanged(mode),
+                  ),
+              ],
+            ),
+            const SizedBox(height: 6),
+            Text(
+              '${journalMode.description} Capacity: ${journalMode.capacity}; '
+              'policy: ${journalMode.overflowPolicy.name}.',
+              style: Theme.of(context).textTheme.labelSmall,
+            ),
           ],
         ),
       ),
@@ -511,13 +616,26 @@ class _RatePreset {
   final int updatesPerSecond;
 }
 
-class _ChartCard extends StatelessWidget {
-  const _ChartCard({required this.history});
+class _MetricExplanationCard extends StatelessWidget {
+  const _MetricExplanationCard({
+    required this.transactionMode,
+    required this.journalMode,
+  });
 
-  final _TelemetryHistory history;
+  final TelemetryTransactionMode transactionMode;
+  final TelemetryJournalMode journalMode;
 
   @override
   Widget build(BuildContext context) {
+    final journalExplanation = journalMode.clearsAfterSampling
+        ? 'Journal utilization is sampled every 250 ms and then cleared. It '
+            'is a recent observation window, not a growing backlog.'
+        : journalMode.overflowPolicy == JournalOverflowPolicy.overwriteOldest
+            ? 'Journal observations are retained until the fixed capacity is '
+                'reached. Older state observations are overwritten.'
+            : 'Journal observations are retained until the fixed capacity is '
+                'reached. Newer state observations are rejected from the journal; '
+                'record commits still continue.';
     return Card(
       margin: EdgeInsets.zero,
       child: Padding(
@@ -526,14 +644,30 @@ class _ChartCard extends StatelessWidget {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: <Widget>[
             Text(
-              'Sensor 0 temperature history',
+              'How to read the metrics',
               style: Theme.of(context).textTheme.titleMedium,
             ),
-            const SizedBox(height: 12),
-            SizedBox(
-              height: 150,
-              width: double.infinity,
-              child: CustomPaint(painter: _TelemetryChartPainter(history)),
+            const SizedBox(height: 8),
+            const Text(
+              'Raw inputs are producer samples. Committed records are net '
+              'record changes. Transaction-compacted inputs did not become '
+              'independent record commits; they are not lost data.',
+            ),
+            const SizedBox(height: 6),
+            Text(
+              'Frame coalesced counts committed changes merged before a '
+              'Flutter delivery. Select Burst transactions to generate '
+              'several synchronous commits before Flutter can flush a frame.',
+            ),
+            const SizedBox(height: 6),
+            Text(
+              journalExplanation,
+              style: Theme.of(context).textTheme.labelSmall,
+            ),
+            const SizedBox(height: 6),
+            Text(
+              'Current transaction mode: ${transactionMode.label}.',
+              style: Theme.of(context).textTheme.labelSmall,
             ),
           ],
         ),
@@ -542,137 +676,216 @@ class _ChartCard extends StatelessWidget {
   }
 }
 
-class _SensorCards extends StatelessWidget {
-  const _SensorCards({
+class _SensorTelemetryGrid extends StatelessWidget {
+  const _SensorTelemetryGrid({
     required this.store,
     required this.handles,
+    required this.deliveryMeter,
     required this.onReactiveBuild,
   });
 
   final PulseStore store;
   final List<RecordHandle> handles;
+  final _UiDeliveryMeter deliveryMeter;
   final VoidCallback onReactiveBuild;
+
+  static const _columnCount = 2;
+  static const _columnSpacing = 12.0;
 
   @override
   Widget build(BuildContext context) {
-    return Wrap(
-      spacing: 10,
-      runSpacing: 10,
+    return Column(
       children: <Widget>[
-        _TemperatureOnlyCard(
-          store: store,
-          handle: handles.first,
-          onReactiveBuild: onReactiveBuild,
-        ),
-        for (var index = 1; index < math.min(handles.length, 9); index++)
-          _MultiFieldCard(
-            store: store,
-            handle: handles[index],
-            sensorIndex: index,
-            onReactiveBuild: onReactiveBuild,
+        for (var firstSensorIndex = 0;
+            firstSensorIndex < handles.length;
+            firstSensorIndex += _columnCount) ...<Widget>[
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: <Widget>[
+              Expanded(child: _buildCard(firstSensorIndex)),
+              const SizedBox(width: _columnSpacing),
+              Expanded(
+                child: firstSensorIndex + 1 < handles.length
+                    ? _buildCard(firstSensorIndex + 1)
+                    : const SizedBox.shrink(),
+              ),
+            ],
           ),
+          if (firstSensorIndex + _columnCount < handles.length)
+            const SizedBox(height: _columnSpacing),
+        ],
       ],
     );
   }
-}
 
-class _TemperatureOnlyCard extends StatelessWidget {
-  const _TemperatureOnlyCard({
-    required this.store,
-    required this.handle,
-    required this.onReactiveBuild,
-  });
-
-  final PulseStore store;
-  final RecordHandle handle;
-  final VoidCallback onReactiveBuild;
-
-  @override
-  Widget build(BuildContext context) {
-    return SizedBox(
-      width: 240,
-      child: Card(
-        margin: EdgeInsets.zero,
-        child: Padding(
-          padding: const EdgeInsets.all(14),
-          child: ReactiveRecordBuilder(
-            store: store,
-            handle: handle,
-            fields: _temperatureField.mask,
-            builder: (context, record) {
-              onReactiveBuild();
-              return Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: <Widget>[
-                  Text(
-                    'Sensor 0',
-                    style: Theme.of(context).textTheme.titleMedium,
-                  ),
-                  const SizedBox(height: 8),
-                  Text(
-                    '${record.get(_temperatureField).toStringAsFixed(2)} C',
-                    style: Theme.of(context).textTheme.headlineSmall,
-                  ),
-                  const SizedBox(height: 6),
-                  const Text('Subscribed to temperature only'),
-                ],
-              );
-            },
-          ),
-        ),
-      ),
+  Widget _buildCard(int sensorIndex) {
+    return _SensorTelemetryCard(
+      key: ValueKey<String>('sensor-card-$sensorIndex'),
+      store: store,
+      handle: handles[sensorIndex],
+      sensorIndex: sensorIndex,
+      deliveryMeter: deliveryMeter,
+      onReactiveBuild: onReactiveBuild,
     );
   }
 }
 
-class _MultiFieldCard extends StatelessWidget {
-  const _MultiFieldCard({
+class _SensorTelemetryCard extends StatefulWidget {
+  const _SensorTelemetryCard({
     required this.store,
     required this.handle,
     required this.sensorIndex,
+    required this.deliveryMeter,
     required this.onReactiveBuild,
+    super.key,
   });
 
   final PulseStore store;
   final RecordHandle handle;
   final int sensorIndex;
+  final _UiDeliveryMeter deliveryMeter;
   final VoidCallback onReactiveBuild;
 
   @override
+  State<_SensorTelemetryCard> createState() => _SensorTelemetryCardState();
+}
+
+class _SensorTelemetryCardState extends State<_SensorTelemetryCard> {
+  static const _historyCapacity = 180;
+
+  late final _TelemetryHistory _history;
+  late ReactiveRecordListenable _listenable;
+  var _temperature = 0.0;
+  var _status = 0;
+  var _observedCoalescedChanges = 0;
+
+  int get _fields => widget.sensorIndex == 0
+      ? TelemetrySchema.temperature.mask
+      : TelemetrySchema.temperature.mask | TelemetrySchema.status.mask;
+
+  bool get _isTemperatureOnly => widget.sensorIndex == 0;
+
+  @override
+  void initState() {
+    super.initState();
+    _history = _TelemetryHistory(capacity: _historyCapacity);
+    _bind();
+  }
+
+  @override
+  void didUpdateWidget(covariant _SensorTelemetryCard oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.store != widget.store || oldWidget.handle != widget.handle) {
+      _unbind();
+      _history.clear();
+      _bind();
+    }
+  }
+
+  void _bind() {
+    _observedCoalescedChanges = 0;
+    _listenable = ReactiveRecordListenable(
+      store: widget.store,
+      handle: widget.handle,
+      fields: _fields,
+    );
+    _readLatestRecord();
+    _listenable.addListener(_onDelivery);
+  }
+
+  void _unbind() {
+    _listenable.removeListener(_onDelivery);
+    _listenable.dispose();
+  }
+
+  void _readLatestRecord() {
+    final record = _listenable.value;
+    _temperature = record.get(TelemetrySchema.temperature);
+    if (!_isTemperatureOnly) {
+      _status = record.get(TelemetrySchema.status);
+    }
+  }
+
+  void _onDelivery() {
+    if (!mounted || !_listenable.isRecordAvailable) {
+      return;
+    }
+    final previousTemperature = _temperature;
+    _readLatestRecord();
+    if (_temperature != previousTemperature) {
+      _history.add(_temperature);
+    }
+    final coalescedChangeDelta =
+        _listenable.coalescedChanges - _observedCoalescedChanges;
+    _observedCoalescedChanges = _listenable.coalescedChanges;
+    widget.deliveryMeter.recordDelivery(
+      coalescedChanges: coalescedChangeDelta,
+    );
+    widget.onReactiveBuild();
+    setState(() {});
+  }
+
+  @override
+  void dispose() {
+    _unbind();
+    super.dispose();
+  }
+
+  @override
   Widget build(BuildContext context) {
-    return SizedBox(
-      width: 240,
-      child: Card(
-        margin: EdgeInsets.zero,
-        child: Padding(
-          padding: const EdgeInsets.all(14),
-          child: ReactiveRecordBuilder(
-            store: store,
-            handle: handle,
-            fields: _temperatureField.mask | _statusField.mask,
-            builder: (context, record) {
-              onReactiveBuild();
-              final status = record.get(_statusField);
-              return Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: <Widget>[
-                  Text(
-                    'Sensor $sensorIndex',
+    final subscriptionLabel = _isTemperatureOnly
+        ? 'Subscribed to temperature only'
+        : 'Subscribed to temperature + status';
+    return Card(
+      margin: EdgeInsets.zero,
+      child: Padding(
+        padding: const EdgeInsets.all(14),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: <Widget>[
+            Row(
+              children: <Widget>[
+                Expanded(
+                  child: Text(
+                    'Sensor ${widget.sensorIndex}',
                     style: Theme.of(context).textTheme.titleMedium,
                   ),
-                  const SizedBox(height: 8),
-                  Text(
-                    '${record.get(_temperatureField).toStringAsFixed(2)} C',
-                    style: Theme.of(context).textTheme.headlineSmall,
+                ),
+                Text(
+                  subscriptionLabel,
+                  style: Theme.of(context).textTheme.labelSmall,
+                ),
+              ],
+            ),
+            const SizedBox(height: 8),
+            Text(
+              '${_temperature.toStringAsFixed(2)} C',
+              style: Theme.of(context).textTheme.headlineSmall,
+            ),
+            if (!_isTemperatureOnly) ...<Widget>[
+              const SizedBox(height: 4),
+              Text('Status 0x${_status.toRadixString(16).padLeft(2, '0')}'),
+            ],
+            const SizedBox(height: 10),
+            Text(
+              'Temperature history (latest $_historyCapacity UI samples)',
+              style: Theme.of(context).textTheme.labelMedium,
+            ),
+            const SizedBox(height: 8),
+            RepaintBoundary(
+              child: SizedBox(
+                height: 120,
+                width: double.infinity,
+                child: CustomPaint(
+                  key: ValueKey<String>('sensor-chart-${widget.sensorIndex}'),
+                  painter: _TelemetryChartPainter(
+                    _history,
+                    revision: _history.revision,
                   ),
-                  const SizedBox(height: 6),
-                  Text('Status 0x${status.toRadixString(16).padLeft(2, '0')}'),
-                  const SizedBox(height: 6),
-                  const Text('Subscribed to temperature + status'),
-                ],
-              );
-            },
-          ),
+                ),
+              ),
+            ),
+          ],
         ),
       ),
     );
@@ -680,34 +893,12 @@ class _MultiFieldCard extends StatelessWidget {
 }
 
 final class _UiDeliveryMeter {
-  _UiDeliveryMeter(PulseStore store, List<RecordHandle> handles) {
-    for (final handle in handles) {
-      final listenable = ReactiveRecordListenable(store: store, handle: handle);
-      _listenables.add(listenable);
-      listenable.addListener(() => _onDelivery(listenable));
-    }
-  }
-
-  final List<ReactiveRecordListenable> _listenables =
-      <ReactiveRecordListenable>[];
-  final Map<ReactiveRecordListenable, int> _observedCoalescing =
-      <ReactiveRecordListenable, int>{};
   var deliveredUpdates = 0;
   var coalescedUpdates = 0;
 
-  void _onDelivery(ReactiveRecordListenable listenable) {
+  void recordDelivery({required int coalescedChanges}) {
     deliveredUpdates++;
-    final previous = _observedCoalescing[listenable] ?? 0;
-    coalescedUpdates += listenable.coalescedChanges - previous;
-    _observedCoalescing[listenable] = listenable.coalescedChanges;
-  }
-
-  void dispose() {
-    for (final listenable in _listenables) {
-      listenable.dispose();
-    }
-    _listenables.clear();
-    _observedCoalescing.clear();
+    coalescedUpdates += coalescedChanges;
   }
 }
 
@@ -718,8 +909,11 @@ final class _TelemetryHistory {
   final Float32List _values;
   var _length = 0;
   var _writeIndex = 0;
+  var _revision = 0;
 
   int get length => _length;
+
+  int get revision => _revision;
 
   void add(double value) {
     _values[_writeIndex] = value;
@@ -727,6 +921,7 @@ final class _TelemetryHistory {
     if (_length < capacity) {
       _length++;
     }
+    _revision++;
   }
 
   double oldestAt(int index) {
@@ -738,13 +933,15 @@ final class _TelemetryHistory {
     _values.fillRange(0, _values.length, 0);
     _length = 0;
     _writeIndex = 0;
+    _revision++;
   }
 }
 
 final class _TelemetryChartPainter extends CustomPainter {
-  const _TelemetryChartPainter(this.history);
+  const _TelemetryChartPainter(this.history, {required this.revision});
 
   final _TelemetryHistory history;
+  final int revision;
 
   @override
   void paint(Canvas canvas, Size size) {
@@ -791,5 +988,8 @@ final class _TelemetryChartPainter extends CustomPainter {
   }
 
   @override
-  bool shouldRepaint(covariant _TelemetryChartPainter oldDelegate) => true;
+  bool shouldRepaint(covariant _TelemetryChartPainter oldDelegate) {
+    return !identical(oldDelegate.history, history) ||
+        oldDelegate.revision != revision;
+  }
 }

@@ -27,7 +27,7 @@ Use the release version selected on pub.dev:
 
 ```yaml
 dependencies:
-  pulse_slab: ^0.2.0-beta.2
+  pulse_slab: ^0.3.0-beta.1
 ```
 
 For local development in this repository, point a consuming package at `../packages/pulse_slab`.
@@ -124,7 +124,7 @@ API:
 
 ~~~yaml
 dependencies:
-  pulse_slab_flutter: ^0.2.0-beta.2
+  pulse_slab_flutter: ^0.3.0-beta.1
 ~~~
 
 ~~~dart
@@ -135,8 +135,8 @@ import 'package:pulse_slab_flutter/pulse_slab_flutter.dart';
 uses frame-coalesced notification by default. A temperature-only builder does
 not rebuild when only `status` changes. The [Flutter telemetry example](https://github.com/JohannesHupp/pulse_slab/tree/main/packages/pulse_slab_flutter/example)
 simulates multiple sensors at configurable high update rates and displays
-processed input updates, UI deliveries, rebuilds, coalescing, and journal
-utilization.
+raw input updates, net committed record changes, transaction compaction, frame
+deliveries, rebuilds, coalescing, and bounded journal behavior.
 
 ## Background byte batches
 
