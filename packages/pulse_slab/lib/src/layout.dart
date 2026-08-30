@@ -112,6 +112,14 @@ abstract class Field<T> {
   /// should write through [RecordWriter.set].
   void write(ByteData data, int absoluteOffset, T value, Endian byteOrder);
 
+  /// Validates that [value] can be stored by this field.
+  ///
+  /// The default implementation accepts every value. Built-in integer and
+  /// fixed-byte fields override this to expose the same range and length
+  /// checks performed by [write]. This lets generated serializers validate a
+  /// model before choosing where to encode it.
+  void validate(T value) {}
+
   /// Returns whether encoding [value] would change the stored field bytes.
   ///
   /// The default scalar implementation uses value equality. Field types with
@@ -187,9 +195,12 @@ final class Int8Field extends Field<int> {
 
   @override
   void write(ByteData data, int absoluteOffset, int value, Endian byteOrder) {
-    _checkIntegerRange(value, -128, 127, name);
+    validate(value);
     data.setInt8(absoluteOffset, value);
   }
+
+  @override
+  void validate(int value) => _checkIntegerRange(value, -128, 127, name);
 }
 
 /// An 8-bit unsigned integer field.
@@ -213,9 +224,12 @@ final class Uint8Field extends Field<int> {
 
   @override
   void write(ByteData data, int absoluteOffset, int value, Endian byteOrder) {
-    _checkIntegerRange(value, 0, 0xff, name);
+    validate(value);
     data.setUint8(absoluteOffset, value);
   }
+
+  @override
+  void validate(int value) => _checkIntegerRange(value, 0, 0xff, name);
 }
 
 /// A 16-bit signed integer field.
@@ -239,9 +253,12 @@ final class Int16Field extends Field<int> {
 
   @override
   void write(ByteData data, int absoluteOffset, int value, Endian byteOrder) {
-    _checkIntegerRange(value, -0x8000, 0x7fff, name);
+    validate(value);
     data.setInt16(absoluteOffset, value, byteOrder);
   }
+
+  @override
+  void validate(int value) => _checkIntegerRange(value, -0x8000, 0x7fff, name);
 }
 
 /// A 16-bit unsigned integer field.
@@ -265,9 +282,12 @@ final class Uint16Field extends Field<int> {
 
   @override
   void write(ByteData data, int absoluteOffset, int value, Endian byteOrder) {
-    _checkIntegerRange(value, 0, 0xffff, name);
+    validate(value);
     data.setUint16(absoluteOffset, value, byteOrder);
   }
+
+  @override
+  void validate(int value) => _checkIntegerRange(value, 0, 0xffff, name);
 }
 
 /// A 32-bit signed integer field.
@@ -291,9 +311,13 @@ final class Int32Field extends Field<int> {
 
   @override
   void write(ByteData data, int absoluteOffset, int value, Endian byteOrder) {
-    _checkIntegerRange(value, -0x80000000, 0x7fffffff, name);
+    validate(value);
     data.setInt32(absoluteOffset, value, byteOrder);
   }
+
+  @override
+  void validate(int value) =>
+      _checkIntegerRange(value, -0x80000000, 0x7fffffff, name);
 }
 
 /// A 32-bit unsigned integer field.
@@ -317,9 +341,12 @@ final class Uint32Field extends Field<int> {
 
   @override
   void write(ByteData data, int absoluteOffset, int value, Endian byteOrder) {
-    _checkIntegerRange(value, 0, 0xffffffff, name);
+    validate(value);
     data.setUint32(absoluteOffset, value, byteOrder);
   }
+
+  @override
+  void validate(int value) => _checkIntegerRange(value, 0, 0xffffffff, name);
 }
 
 /// A 64-bit signed integer field.
@@ -346,8 +373,12 @@ final class Int64Field extends Field<int> {
 
   @override
   void write(ByteData data, int absoluteOffset, int value, Endian byteOrder) {
-    _writeSignedInt64(data, absoluteOffset, value, byteOrder, name);
+    validate(value);
+    _writeSignedInt64Unchecked(data, absoluteOffset, value, byteOrder);
   }
+
+  @override
+  void validate(int value) => _checkSignedInt64Range(value, name);
 }
 
 /// A 64-bit unsigned integer field.
@@ -379,8 +410,12 @@ final class Uint64Field extends Field<int> {
 
   @override
   void write(ByteData data, int absoluteOffset, int value, Endian byteOrder) {
-    _writeSignedInt64(data, absoluteOffset, value, byteOrder, name);
+    validate(value);
+    _writeSignedInt64Unchecked(data, absoluteOffset, value, byteOrder);
   }
+
+  @override
+  void validate(int value) => _checkSignedInt64Range(value, name);
 }
 
 /// A 32-bit floating-point field.
@@ -584,7 +619,7 @@ class BytesField extends Field<Uint8List> {
     Uint8List value,
     Endian byteOrder,
   ) {
-    _checkLength(value);
+    validate(value);
     final Uint8List destination = data.buffer.asUint8List(
       data.offsetInBytes + absoluteOffset,
       length,
@@ -613,7 +648,7 @@ class BytesField extends Field<Uint8List> {
     Uint8List value,
     Endian byteOrder,
   ) {
-    _checkLength(value);
+    validate(value);
     final Uint8List destination = data.buffer.asUint8List(
       data.offsetInBytes + absoluteOffset,
       length,
@@ -638,6 +673,9 @@ class BytesField extends Field<Uint8List> {
         length,
         validate,
       );
+
+  @override
+  void validate(Uint8List value) => _checkLength(value);
 
   void _checkLength(Uint8List value) {
     if (value.length != length) {
@@ -932,14 +970,12 @@ int _readSignedInt64(ByteData data, int offset, Endian byteOrder) {
   return highWord * _int64WordSize + lowWord;
 }
 
-void _writeSignedInt64(
+void _writeSignedInt64Unchecked(
   ByteData data,
   int offset,
   int value,
   Endian byteOrder,
-  String fieldName,
 ) {
-  _checkSignedInt64Range(value, fieldName);
   final int quotient = value ~/ _int64WordSize;
   final int remainder = value.remainder(_int64WordSize);
   final int highWord;

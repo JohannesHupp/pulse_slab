@@ -3,9 +3,12 @@ description: Shared dependency resolution for the pulse_slab package family.
 publish_to: none
 
 environment:
-  sdk: '>=3.6.0 <4.0.0'
+  # The generator uses analyzer/source_gen APIs that require Dart 3.9. Core
+  # consumers remain compatible with the lower bound declared by pulse_slab.
+  sdk: '>=3.9.0 <4.0.0'
 
 workspace:
   - packages/pulse_slab
+  - packages/pulse_slab_generator
   - packages/pulse_slab_flutter
   - packages/pulse_slab_flutter/example

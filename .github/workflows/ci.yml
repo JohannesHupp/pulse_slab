@@ -43,6 +43,36 @@ jobs:
       - name: Run Chrome portability integration test
         run: dart test -p chrome test/web_portability_test.dart
 
+  generator_tests:
+    name: Generator source and integration tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: packages/pulse_slab_generator
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+      - name: Set up Flutter SDK for workspace resolution
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+      - name: Resolve workspace dependencies
+        run: dart pub get
+      - name: Verify formatting
+        run: dart format --output=none --set-exit-if-changed lib test example
+      - name: Analyze generator
+        run: dart analyze
+      - name: Verify checked-in generated source
+        run: |
+          dart run build_runner build
+          git diff --exit-code -- example/sensor_state.g.dart test/fixtures/all_scalar_record.g.dart
+      - name: Run generator unit and generated-source tests
+        run: dart test
+      - name: Run generated example
+        run: dart run example/main.dart
+
   flutter_adapter_tests:
     name: Flutter adapter unit and widget tests
     runs-on: ubuntu-latest
@@ -141,7 +171,9 @@ jobs:
 
   package_snapshot:
     name: Publication package snapshot
-    needs: coverage
+    needs:
+      - coverage
+      - generator_tests
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:

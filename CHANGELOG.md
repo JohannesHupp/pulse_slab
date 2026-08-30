@@ -1,12 +1,21 @@
 # Changelog
 
-Repository-level changes are summarized here. Each publishable package maintains its own changelog:
+Repository-level changes are summarized here. Each publishable package
+maintains its own changelog:
 
 - [`pulse_slab`](packages/pulse_slab/CHANGELOG.md)
 - [`pulse_slab_flutter`](packages/pulse_slab_flutter/CHANGELOG.md)
 
+The internal [`pulse_slab_generator`](packages/pulse_slab_generator/CHANGELOG.md)
+tool also records its changes here in the repository; it is not published to
+pub.dev.
+
 ## Unreleased
 
+- Added the internal optional `pulse_slab_generator` tool for build-time typed
+  layouts, serializers, deserializers, and validation hooks. It is consumed
+  through a Git or local path development dependency, while the Dart 3.6+ core
+  retains its manual `RecordLayout` API and no build dependency.
 - Create one package-specific GitHub Release after each successful tag-triggered
   pub.dev publication, marking semantic prereleases as GitHub pre-releases.
 - Add an idempotent manual workflow for backfilling GitHub Releases for existing

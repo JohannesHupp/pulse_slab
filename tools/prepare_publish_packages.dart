@@ -37,11 +37,15 @@ void main(List<String> arguments) {
 
     _writeWorkspaceManifest(outputDirectory);
 
-    stdout.writeln('Prepared isolated publication packages in '
-        '${_displayPath(outputDirectory.path)}.');
+    stdout.writeln(
+      'Prepared isolated publication packages in '
+      '${_displayPath(outputDirectory.path)}.',
+    );
     for (final _PackageDefinition package in _packages) {
-      stdout.writeln('  ${package.name}: '
-          '${_displayPath(_join(outputDirectory.path, package.stagingPath))}');
+      stdout.writeln(
+        '  ${package.name}: '
+        '${_displayPath(_join(outputDirectory.path, package.stagingPath))}',
+      );
     }
   } on _StagingException catch (error) {
     stderr.writeln('Publication staging failed: ${error.message}');
@@ -121,10 +125,12 @@ Directory _findRepositoryRoot() {
     );
   }
 
-  final Directory repositoryRoot =
-      Directory(toolDirectory.parent.resolveSymbolicLinksSync());
-  final File workspaceManifest =
-      File(_join(repositoryRoot.path, 'pubspec.yaml'));
+  final Directory repositoryRoot = Directory(
+    toolDirectory.parent.resolveSymbolicLinksSync(),
+  );
+  final File workspaceManifest = File(
+    _join(repositoryRoot.path, 'pubspec.yaml'),
+  );
   if (!workspaceManifest.existsSync()) {
     throw const _StagingException(
       'The repository root does not contain a pubspec.yaml workspace manifest.',
@@ -145,13 +151,12 @@ Directory _prepareOutputDirectory(Directory repositoryRoot) {
 
 bool _removeOutputDirectory(Directory repositoryRoot) {
   final String outputPath = _join(repositoryRoot.path, 'publish');
-  _validateOutputPath(
-    repositoryRoot: repositoryRoot,
-    outputPath: outputPath,
-  );
+  _validateOutputPath(repositoryRoot: repositoryRoot, outputPath: outputPath);
 
-  final FileSystemEntityType type =
-      FileSystemEntity.typeSync(outputPath, followLinks: false);
+  final FileSystemEntityType type = FileSystemEntity.typeSync(
+    outputPath,
+    followLinks: false,
+  );
   switch (type) {
     case FileSystemEntityType.notFound:
       return false;
@@ -184,8 +189,9 @@ void _stagePackage({
   required Directory outputDirectory,
   required _PackageDefinition package,
 }) {
-  final Directory sourceDirectory =
-      Directory(_join(repositoryRoot.path, package.sourcePath));
+  final Directory sourceDirectory = Directory(
+    _join(repositoryRoot.path, package.sourcePath),
+  );
   if (!sourceDirectory.existsSync()) {
     throw _StagingException(
       'Expected source package ${package.name} at ${package.sourcePath}.',
@@ -205,8 +211,9 @@ void _stagePackage({
     }
   }
 
-  final Directory destinationDirectory =
-      Directory(_join(outputDirectory.path, package.stagingPath));
+  final Directory destinationDirectory = Directory(
+    _join(outputDirectory.path, package.stagingPath),
+  );
   _validatePathWithin(
     parentDirectory: outputDirectory,
     candidatePath: destinationDirectory.path,
@@ -215,17 +222,18 @@ void _stagePackage({
   destinationDirectory.createSync(recursive: true);
 
   final List<FileSystemEntity> entries =
-      sourceDirectory.listSync(followLinks: false)
-        ..sort(
-          (FileSystemEntity left, FileSystemEntity right) =>
-              left.path.compareTo(right.path),
-        );
+      sourceDirectory.listSync(followLinks: false)..sort(
+        (FileSystemEntity left, FileSystemEntity right) =>
+            left.path.compareTo(right.path),
+      );
 
   for (final FileSystemEntity entry in entries) {
     final String name = _basename(entry.path);
     final String normalizedName = name.toLowerCase();
-    final FileSystemEntityType type =
-        FileSystemEntity.typeSync(entry.path, followLinks: false);
+    final FileSystemEntityType type = FileSystemEntity.typeSync(
+      entry.path,
+      followLinks: false,
+    );
 
     if (type == FileSystemEntityType.link) {
       throw _StagingException(
@@ -250,16 +258,18 @@ void _stagePackage({
         _publishableFileNames.contains(normalizedName)) {
       final File destination = File(_join(destinationDirectory.path, name));
       if (normalizedName == 'pubspec.yaml') {
-        destination
-            .writeAsStringSync(_withoutNestedWorkspace(File(entry.path)));
+        destination.writeAsStringSync(
+          _withoutNestedWorkspace(File(entry.path)),
+        );
       } else {
         File(entry.path).copySync(destination.path);
       }
     }
   }
 
-  final File stagedManifest =
-      File(_join(destinationDirectory.path, 'pubspec.yaml'));
+  final File stagedManifest = File(
+    _join(destinationDirectory.path, 'pubspec.yaml'),
+  );
   if (!stagedManifest.existsSync()) {
     throw _StagingException(
       'Failed to stage pubspec.yaml for ${package.name}.',
@@ -289,8 +299,10 @@ void _copyDirectory({
   for (final FileSystemEntity entry in entries) {
     final String name = _basename(entry.path);
     final String normalizedName = name.toLowerCase();
-    final FileSystemEntityType type =
-        FileSystemEntity.typeSync(entry.path, followLinks: false);
+    final FileSystemEntityType type = FileSystemEntity.typeSync(
+      entry.path,
+      followLinks: false,
+    );
 
     if (type == FileSystemEntityType.link) {
       throw _StagingException(
@@ -356,8 +368,10 @@ bool _isPartOfTopLevelYamlBlock(String line) {
 
 void _validateWorkspaceResolution(File stagedManifest, String packageName) {
   final String contents = stagedManifest.readAsStringSync();
-  if (!RegExp(r'^resolution\s*:\s*workspace\s*$', multiLine: true)
-      .hasMatch(contents)) {
+  if (!RegExp(
+    r'^resolution\s*:\s*workspace\s*$',
+    multiLine: true,
+  ).hasMatch(contents)) {
     throw _StagingException(
       'Staged package $packageName must use resolution: workspace.',
     );
@@ -389,8 +403,9 @@ void _validateOutputPath({
   required String outputPath,
 }) {
   final String normalizedRoot = _normalizePath(repositoryRoot.absolute.path);
-  final String normalizedOutput =
-      _normalizePath(Directory(outputPath).absolute.path);
+  final String normalizedOutput = _normalizePath(
+    Directory(outputPath).absolute.path,
+  );
   final String expectedPath = _normalizePath(_join(normalizedRoot, 'publish'));
 
   if (normalizedOutput != expectedPath) {
@@ -406,8 +421,9 @@ void _validatePathWithin({
   required String description,
 }) {
   final String normalizedParent = _normalizePath(parentDirectory.absolute.path);
-  final String normalizedCandidate =
-      _normalizePath(Directory(candidatePath).absolute.path);
+  final String normalizedCandidate = _normalizePath(
+    Directory(candidatePath).absolute.path,
+  );
   if (!_isPathWithin(normalizedParent, normalizedCandidate)) {
     throw _StagingException(
       'The $description must be inside the expected staging directory.',
@@ -420,8 +436,9 @@ void _validateResolvedChildPath({
   required String candidatePath,
   required String description,
 }) {
-  final String normalizedRoot =
-      _normalizePath(repositoryRoot.resolveSymbolicLinksSync());
+  final String normalizedRoot = _normalizePath(
+    repositoryRoot.resolveSymbolicLinksSync(),
+  );
   final String normalizedCandidate = _normalizePath(candidatePath);
   if (!_isPathWithin(normalizedRoot, normalizedCandidate)) {
     throw _StagingException(

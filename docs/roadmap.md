@@ -6,9 +6,27 @@ verification established in the previous release line. Future work should
 remain driven by measured workloads and preserve the ownership and lifecycle
 guarantees documented in this repository.
 
+## Optional generated layouts
+
+The internal
+[`pulse_slab_generator`](../packages/pulse_slab_generator/) tool now provides
+an optional `build_runner` workflow for annotated immutable schemas. It emits
+stable field descriptors, precomputed layout metadata, typed store accessors,
+serializers, deserializers, and validation hooks for supported scalar and
+fixed-byte fields. Generated reads and writes address descriptors and offsets
+directly rather than using field-name lookup or runtime reflection.
+
+This workflow is deliberately not required: hand-authored `RecordLayout` and
+`Field` descriptors remain supported, and the core package keeps no generator
+or build-time dependency. The generator is `publish_to: none`, so applications
+add it as a Git dependency with `path: packages/pulse_slab_generator` (or as a
+local path dependency when working from a checkout). The core supports Dart
+3.6 or later; applications that add `pulse_slab_generator` need Dart 3.9 or
+later. Its [complete example](../packages/pulse_slab_generator/example/)
+documents the declaration and generation command.
+
 Potential future work includes:
 
-- Layout code generation for static field descriptors, serializers, and validation.
 - Native shared-memory backends with explicit ownership, synchronization, and isolate constraints.
 - C and Rust integration layers.
 - Atomic snapshot protocols for readers that need coordinated multi-record views.

@@ -90,6 +90,91 @@ store.dispose();
 
 Field descriptor names are metadata. Hot reads and writes use the stable descriptor and its resolved byte offset, not a string lookup. A layout permits at most 31 dirty-tracked fields because it uses a portable, non-negative integer field mask.
 
+## Optional generated layouts
+
+The manual `RecordLayout` and `Field` API shown above remains fully supported
+and needs no build step. For stable schemas that benefit from generated
+boilerplate, add the internal
+[`pulse_slab_generator`](../pulse_slab_generator/) tool from this repository.
+It is an opt-in development dependency, not a separately published pub.dev
+package: `pulse_slab` has no `build_runner` or generator dependency and
+continues to support Dart 3.6 or later, while `pulse_slab_generator` requires
+Dart 3.9 or later.
+
+```yaml
+dependencies:
+  pulse_slab: ^0.3.0-beta.1
+
+dev_dependencies:
+  build_runner: ^2.14.1
+  pulse_slab_generator:
+    git:
+      url: https://github.com/JohannesHupp/pulse_slab.git
+      path: packages/pulse_slab_generator
+      ref: main
+```
+
+For a consuming application inside or beside a checkout of this repository,
+replace the Git dependency with a local path dependency such as:
+
+```yaml
+dev_dependencies:
+  build_runner: ^2.14.1
+  pulse_slab_generator:
+    path: ../pulse_slab/packages/pulse_slab_generator
+```
+
+Pin the Git `ref` to a commit or repository tag for release builds; adjust a
+local path to match your checkout layout. The generator's own README contains
+the same workflow in full. When developing local core and generator changes
+outside this repository's Pub workspace, add a development-only override in
+the consuming app to keep them on the same checkout:
+
+```yaml
+dependency_overrides:
+  pulse_slab:
+    path: ../pulse_slab/packages/pulse_slab
+```
+
+Annotate an immutable schema in the core package's public API and declare its
+generated part:
+
+```dart
+import 'package:pulse_slab/pulse_slab.dart';
+
+part 'sensor_state.g.dart';
+
+@SlabRecord(byteOrder: SlabByteOrder.little)
+final class SensorState {
+  const SensorState({required this.sequence, required this.identity});
+
+  @SlabField(kind: SlabFieldKind.uint32)
+  final int sequence;
+
+  @SlabField(kind: SlabFieldKind.fixedBytes, length: 16)
+  final Uint8List identity;
+}
+```
+
+Generate the part with:
+
+```sh
+dart run build_runner build
+```
+
+The generated `SensorStateLayout` provides stable typed descriptors,
+precomputed offsets, masks, and size metadata, plus a singleton `RecordLayout`,
+typed store reads and writes, and `serialize`, `deserialize`, `validate`, and
+`validateBytes` helpers. Its hot reads and writes use the generated descriptors
+and offsets directly, with no field-name lookup or runtime reflection.
+Supported declarations cover integer and floating-point scalar fields, `bool`,
+and fixed-length `Uint8List` fields; invalid declarations are reported by
+`build_runner`. Generated source is deterministic and may be checked in. See the
+[complete generated-layout example](../pulse_slab_generator/example/) for the
+full workflow and API. Generated records use `final` fields and an unnamed
+generative constructor with matching `this.field` initializing formals, so a
+deserializer cannot transform an encoded value while rebuilding the object.
+
 ## Delivery policies
 
 | Policy | Behavior | Queue bound |
@@ -179,7 +264,9 @@ dart test -p chrome test/web_portability_test.dart
 
 ## Current limitations
 
-- Fixed record layouts are runtime descriptors; code generation is planned but not included.
+- Generated layouts are optional. Hand-authored `RecordLayout` and `Field`
+  descriptors remain the supported build-free API; projects that opt into
+  `pulse_slab_generator` need Dart 3.9 or later.
 - A layout is limited to 31 independently dirty-tracked fields so masks remain exact on native and JavaScript targets.
 - `Int64Field` and `Uint64Field` encode two 32-bit words, so the core remains runnable on Flutter web. Dart JavaScript cannot represent every 64-bit `int` exactly; use a fixed byte field for portable full-width identifiers, counters, or unsigned arithmetic. `Uint64Field` uses a signed two's-complement `int` bit pattern when the high bit is set.
 - Writes are single-isolate and single-writer; nested transactions are rejected, while listener-initiated follow-up transactions use the documented delivery policy semantics.

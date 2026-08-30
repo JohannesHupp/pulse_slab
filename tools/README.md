@@ -3,7 +3,9 @@
 This directory is reserved for repository-level maintenance tooling. The project keeps its executable benchmark with the publishable package so it can run after checking out only `packages/pulse_slab`.
 
 Initialize the shared Pub workspace from the repository root, then run Dart
-core checks from `packages/pulse_slab`:
+core checks from `packages/pulse_slab`. The workspace includes the optional
+generator and therefore needs Dart 3.9 or later; the independently published
+`pulse_slab` runtime package remains compatible with Dart 3.6 or later.
 
 ~~~powershell
 dart pub get
@@ -16,6 +18,20 @@ dart test -p chrome test/web_portability_test.dart
 dart run benchmark/pulse_slab_benchmark.dart
 dart pub publish --dry-run
 ~~~
+
+Run checks for the internal generator from `packages/pulse_slab_generator`:
+
+~~~powershell
+cd packages/pulse_slab_generator
+dart format --output=none --set-exit-if-changed lib test example
+dart analyze
+dart run build_runner build
+git diff --exit-code -- example/sensor_state.g.dart test/fixtures/all_scalar_record.g.dart
+dart test
+dart run example/main.dart
+~~~
+
+The generator is not part of publication staging or pub.dev release checks.
 
 Run Flutter adapter and telemetry example checks from
 `packages/pulse_slab_flutter` and `packages/pulse_slab_flutter/example`.
@@ -74,5 +90,8 @@ job summary. Generate the same Markdown report locally after collecting core
 and Flutter coverage:
 
 ~~~powershell
-dart run tools/coverage_summary.dart --input pulse_slab=packages/pulse_slab/coverage/lcov.info --input pulse_slab_flutter=packages/pulse_slab_flutter/coverage/lcov.info --output coverage/summary.md
+dart run tools/coverage_summary.dart `
+  --input pulse_slab=packages/pulse_slab/coverage/lcov.info `
+  --input pulse_slab_flutter=packages/pulse_slab_flutter/coverage/lcov.info `
+  --output coverage/summary.md
 ~~~

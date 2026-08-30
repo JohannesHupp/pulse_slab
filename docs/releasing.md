@@ -36,19 +36,25 @@ flowchart LR
 manual dispatches. It runs in this order:
 
 1. Core VM unit and integration tests, including the browser portability test.
-2. Flutter adapter unit and widget tests.
-3. Flutter telemetry example integration tests.
-4. LCOV collection for the core and Flutter adapter.
-5. A compact Markdown coverage table added to the GitHub Actions job summary,
+2. Generator formatting, analysis, generated-source freshness, unit and
+   generated-source tests, and its complete runnable example.
+3. Flutter adapter unit and widget tests.
+4. Flutter telemetry example integration tests.
+5. LCOV collection for the core and Flutter adapter.
+6. A compact Markdown coverage table added to the GitHub Actions job summary,
    plus the raw reports as a workflow artifact.
-6. Creation and upload of `publish/`, an isolated workspace containing exactly
-   `packages/pulse_slab` and `packages/pulse_slab_flutter`.
+7. Creation and upload of `publish/`, an isolated workspace containing the two
+   publishable packages: `packages/pulse_slab` and
+   `packages/pulse_slab_flutter`.
 
 The summary table contains line coverage for each package and their combined
 total. It also includes branch columns when the underlying LCOV report supplies
 branch records; Dart and Flutter test coverage commonly reports those values as
 `N/A`. Coverage is a measurement and review signal; this workflow does not
 enforce an arbitrary percentage threshold.
+
+`pulse_slab_generator` is an internal workspace tool. Its CI job gates the
+publication snapshot, but the generator is neither staged nor published.
 
 ## Publication snapshot
 
@@ -231,13 +237,25 @@ dart run coverage:format_coverage --lcov --in=coverage --out=coverage/lcov.info 
 flutter pub publish --dry-run
 Pop-Location
 
+Push-Location packages/pulse_slab_generator
+dart format --output=none --set-exit-if-changed lib test example
+dart analyze
+dart run build_runner build
+git diff --exit-code -- example/sensor_state.g.dart test/fixtures/all_scalar_record.g.dart
+dart test
+dart run example/main.dart
+Pop-Location
+
 Push-Location packages/pulse_slab_flutter
 flutter test
 flutter test --coverage
 flutter pub publish --dry-run
 Pop-Location
 
-dart run tools/coverage_summary.dart --input pulse_slab=packages/pulse_slab/coverage/lcov.info --input pulse_slab_flutter=packages/pulse_slab_flutter/coverage/lcov.info --output coverage/summary.md
+dart run tools/coverage_summary.dart `
+  --input pulse_slab=packages/pulse_slab/coverage/lcov.info `
+  --input pulse_slab_flutter=packages/pulse_slab_flutter/coverage/lcov.info `
+  --output coverage/summary.md
 
 dart tools/prepare_publish_packages.dart
 ~~~
