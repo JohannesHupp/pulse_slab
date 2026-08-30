@@ -5,8 +5,7 @@
 - Documented the bounded `immediate`, `latest`, and `batched` state-delivery
   contract, including reentrancy, flush, and lifecycle behavior.
 - Added allocation-free per-subscription `pendingDeliveries`, `deliveredCount`,
-  `coalescedCount`, and `droppedCount` diagnostics without changing delivery
-  policies or journal semantics.
+  `coalescedCount`, and `droppedCount` diagnostics.
 
 ## 0.3.0-beta.1
 

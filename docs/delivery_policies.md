@@ -1,16 +1,10 @@
-# Delivery policy design
+# Delivery policies
 
-## Decision
-
-Issue #15 makes the existing bounded state-delivery behavior explicit and
-observable. It does not add a `DeliveryPolicy` value or a per-subscription FIFO
-queue. A future ordered intermediate-state policy requires a measured use case
-and a separate public-API decision.
-
-All policies deliver observations of replaceable record state, never a lossless
-event stream. A committed transaction is independent from journal admission and
-from listener delivery: a full rejecting journal never rolls back a committed
-record or suppresses its matching subscriptions.
+Delivery policies control how matching record-state changes reach a
+subscription. They deliver observations of replaceable record state, not a
+lossless event stream. A committed transaction is independent from journal
+admission and listener delivery: a full rejecting journal never rolls back a
+committed record or suppresses its matching subscriptions.
 
 ## Shared dispatch rules
 
@@ -56,7 +50,7 @@ Journal metrics remain separate. `ChangeJournal.overwrittenCount`,
 describe journal admission only; they do not change any subscription delivery
 metric.
 
-## Performance boundary
+## Metric implementation
 
 Metric state is stored as primitive counters on each subscription and is updated
 only while routing, evicting, dequeuing, or invoking that subscription. This

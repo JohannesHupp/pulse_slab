@@ -92,7 +92,7 @@ Implementation details stay under each package's `lib/src` directory. The core p
 
 - The complete capacity, ordering, overflow, flush, reentrancy, and
   per-subscription metric contract is in
-  [Delivery policy design](delivery_policies.md).
+  [Delivery policies](delivery_policies.md).
 - Record subscriptions are stored per handle, so dispatch does not scan a global listener collection.
 - Matching callbacks run in registration order after state has committed. Removing a subscription during dispatch is safe; inactive subscriptions are skipped.
 - A commit made while immediate dispatch is active queues matching immediate

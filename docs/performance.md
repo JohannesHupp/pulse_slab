@@ -71,7 +71,7 @@ Each `StoreSubscription` exposes allocation-free scalar delivery metrics. Its
 current `pendingDeliveries` gauge and monotonic `deliveredCount`,
 `coalescedCount`, and `droppedCount` counters are maintained while that
 subscription is routed; reading them neither allocates a snapshot nor scans
-other listeners. See the [delivery policy design](delivery_policies.md) for the
+other listeners. See [delivery policies](delivery_policies.md) for the
 precise capacity, overflow, and reentrancy contract.
 
 ## Journals, overflow, and metrics

@@ -262,7 +262,7 @@ for new portable identifiers, counters, and unsigned values.
 
 | Policy | Behavior | Queue bound |
 | --- | --- | --- |
-| `immediate` | Calls matching listeners immediately after a successful commit. | No normal queue; reentrant listener calls use a fixed replaceable queue. |
+| `immediate` | Calls matching listeners immediately after a successful commit. | No normal queue; immediate calls reentered during active immediate dispatch use a fixed replaceable queue. |
 | `latest` | Keeps only the latest merged state change per subscription until `flush()`. | One pending change per subscription. |
 | `batched` | Retains matching state changes in arrival order until `flush()`. | Fixed store-wide delivery ring; a full ring replaces its oldest pending delivery. |
 
@@ -279,8 +279,6 @@ matching immediate listeners inline instead. During an active immediate
 traversal, reentrant `latest` and `batched` subscriptions enter their own
 bounded policy queues immediately, so their coalescing semantics are preserved.
 `flush()` rejects reentrant calls from a latest or batched delivery callback.
-Prefer deferring feedback loops when a flat callback sequence is easier to
-reason about.
 
 If a queued reentrant immediate listener fails, the first failure is rethrown
 when the outermost delivery traversal completes. It never rolls back either
@@ -294,7 +292,7 @@ are cumulative. Latest replacement increments `coalescedCount`, while
 reentrant-immediate delivery ring. Journal overwrite and rejection metrics are
 separate from subscription delivery metrics. The complete ordering, capacity,
 flush, reentrancy, and metric contract is in the repository's
-[delivery policy design](https://github.com/JohannesHupp/pulse_slab/blob/main/docs/delivery_policies.md).
+[delivery policies](https://github.com/JohannesHupp/pulse_slab/blob/main/docs/delivery_policies.md).
 
 Transaction and `update` actions must be synchronous; a returned `Future` is
 rejected and the synchronous prefix is rolled back. Record listeners and
