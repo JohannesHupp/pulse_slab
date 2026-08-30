@@ -79,12 +79,6 @@ arrive before one Flutter frame. The difference should come from intentional
 filtering and coalescing, not an unbounded queue or hidden lossless-event
 assumption.
 
-The example intentionally keeps all 24 sensor charts mounted in a two-column
-grid, which creates a controlled widget and paint workload. Each chart records
-at most one latest-state sample per frame-coalesced delivery rather than one
-sample per raw producer input. Its top-right FPS indicator is derived from
-Flutter engine timing records and is most useful in profile or release mode.
-
 ## Why input frequency is not UI frequency
 
 A screen cannot use every intermediate value that arrives between two frames. Rebuilding a widget for each incoming update wastes build, layout, paint, and garbage-collection budget. The data plane should process every important input to keep state current; the UI plane should receive the newest relevant state when it can render it.

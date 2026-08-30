@@ -38,17 +38,11 @@ subscribe to temperature and status together. This makes it visible that a
 pressure-only write does not rebuild either card type, while the core store can
 continue processing every generated update.
 
-All 24 sensor cards are shown in a two-column grid and remain mounted intentionally.
-Every card contains a temperature chart backed by its own fixed `Float32List`
-ring buffer. A history receives at most one latest-state sample per
-frame-coalesced UI delivery, rather than one sample for every raw producer
-input. This makes the screen a deliberate UI-load test without adding a chart
-package or an unbounded history model.
+Each sensor view includes a temperature history chart.
 
-The top-right FPS indicator is a recent rendered-frame-rate estimate derived
-from Flutter engine timing records. It is sampled only while the simulation is
-running and is most meaningful in profile or release mode; `FPS --` means no
-current measurement is available.
+The top-right FPS indicator reports a recent rendered frame rate while the
+simulation is running. It is most useful in profile or release mode; `FPS --`
+means no current measurement is available.
 
 The journal is a replaceable state-observation channel, not a lossless
 domain-event consumer. Applications needing acknowledged events should use a

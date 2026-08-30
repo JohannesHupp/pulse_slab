@@ -75,9 +75,8 @@ net committed record changes, transaction compaction, frame delivery,
 frame coalescing, widget rebuilds, and bounded journal behavior. Its controls
 also demonstrate why a sampled-and-cleared journal can show stable utilization
 while a retained pressure journal eventually overwrites or rejects observations.
-It deliberately keeps 24 two-column sensor charts mounted so high-rate runs can
-exercise visible Flutter widget and paint load. A small top-right FPS indicator
-reports a recent rendered-frame-rate estimate while the simulation is running.
+The example also includes per-sensor charts and an FPS indicator for inspecting
+UI behavior at high input rates.
 
 ## Limitations
 

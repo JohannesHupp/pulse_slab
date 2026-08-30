@@ -137,8 +137,6 @@ not rebuild when only `status` changes. The [Flutter telemetry example](https://
 simulates multiple sensors at configurable high update rates and displays
 raw input updates, net committed record changes, transaction compaction, frame
 deliveries, rebuilds, coalescing, and bounded journal behavior.
-It also keeps 24 frame-coalesced sensor charts mounted to demonstrate UI load
-and displays a recent rendered-frame-rate estimate during active simulation.
 
 ## Background byte batches
 
