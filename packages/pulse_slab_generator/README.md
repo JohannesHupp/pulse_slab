@@ -11,6 +11,13 @@ schemas. The generator requires Dart 3.9 or later; `pulse_slab` itself keeps
 its Dart 3.6 runtime floor and has no build-time dependencies. The generator
 belongs in `dev_dependencies`, so it is never a runtime dependency of the app.
 
+## Platform support
+
+The generator is a native build-time tool with declared support for Android,
+iOS, Linux, macOS, and Windows. It is not a runtime dependency and is not
+executed in a deployed web application; the generated layouts remain portable
+to every target supported by `pulse_slab`, including web.
+
 ## Usage
 
 Add matching hosted versions of the runtime package and builder. The generator
@@ -22,7 +29,7 @@ dependencies:
 
 dev_dependencies:
   build_runner: ^2.14.1
-  pulse_slab_generator: ^0.3.0-beta.1
+  pulse_slab_generator: ^0.3.0-beta.2
 ```
 
 For development against a checkout, override both packages to the same local

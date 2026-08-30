@@ -375,7 +375,7 @@ final class SlabLayoutGenerator extends GeneratorForAnnotation<SlabRecord> {
           element: parameter,
         );
       }
-      if (!parameter.isInitializingFormal) {
+      if (parameter is! FieldFormalParameterElement) {
         _invalid(
           'Constructor parameter "$parameterName" in "$className" must be '
           'an initializing formal (`this.$parameterName`).',

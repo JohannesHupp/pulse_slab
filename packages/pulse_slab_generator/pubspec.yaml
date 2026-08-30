@@ -1,6 +1,6 @@
 name: pulse_slab_generator
 description: Optional build-time layout generation for typed Pulse Slab records.
-version: 0.3.0-beta.1
+version: 0.3.0-beta.2
 resolution: workspace
 repository: https://github.com/JohannesHupp/pulse_slab
 issue_tracker: https://github.com/JohannesHupp/pulse_slab/issues
@@ -9,6 +9,15 @@ topics:
   - typed-data
   - serialization
   - reactive
+
+# This package runs as a native development-time build tool. The generated
+# source itself remains portable to every target supported by pulse_slab.
+platforms:
+  android:
+  ios:
+  linux:
+  macos:
+  windows:
 
 environment:
   sdk: '>=3.9.0 <4.0.0'

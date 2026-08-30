@@ -8,7 +8,7 @@ layouts use a portable, layout-scoped `FieldSelection`. See the core
 [field-selection guide](packages/pulse_slab/README.md#field-selection-for-wide-layouts)
 for the API and migration details.
 
-Version 0.3.0-beta.1 contains three independently publishable packages:
+The package family contains three independently publishable packages:
 
 | Component | Purpose | Distribution |
 | --- | --- | --- |

@@ -13,6 +13,13 @@ compatible `pulse_slab` versions, while the manual runtime API stays build-free.
 
 ## Unreleased
 
+## 0.3.0-beta.2 (`pulse_slab_generator`)
+
+- Restored compatibility with the current analyzer element API used by pub.dev
+  package analysis.
+- Declared the generator's native build-time platform support while preserving
+  generated-layout portability to every `pulse_slab` runtime target.
+
 ## 0.3.0-beta.1
 
 - Added the optional `pulse_slab_generator` pub.dev package for build-time

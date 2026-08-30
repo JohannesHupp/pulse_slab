@@ -160,7 +160,7 @@ dependencies:
 
 dev_dependencies:
   build_runner: ^2.14.1
-  pulse_slab_generator: ^0.3.0-beta.1
+  pulse_slab_generator: ^0.3.0-beta.2
 ```
 
 The generator's own README contains the full hosted and local-development
