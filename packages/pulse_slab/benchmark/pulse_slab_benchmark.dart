@@ -30,10 +30,12 @@ void main() {
 
   final results = <BenchmarkResult>[
     _sequentialTypedWrites(schema, operations),
+    _portableUint64ReadWrites(operations),
     _randomRecordUpdates(schema, operations),
     _transactionThroughput(schema, operations),
     _subscriptionDispatch(schema, operations),
     _fieldFilteredDispatch(schema, operations),
+    _wideFieldFilteredDispatch(operations),
     _frameStyleCoalescing(schema, operations),
     _allocationAndSlotReuse(schema, operations),
     _objectBaseline(operations),
@@ -87,6 +89,48 @@ BenchmarkResult _sequentialTypedWrites(
     );
   } finally {
     fixture.dispose();
+  }
+}
+
+BenchmarkResult _portableUint64ReadWrites(int operations) {
+  final Uint64ValueField value = Uint64ValueField('value');
+  final RecordLayout layout = RecordLayout(
+    name: 'PortableUint64BenchmarkRecord',
+    fields: <Field<Object?>>[value],
+  );
+  final PulseStore store = PulseStore();
+  final RecordHandle handle = store.allocate(layout);
+  final List<Uint64Value> values = <Uint64Value>[
+    Uint64Value.highBit,
+    Uint64Value.maxValue,
+    Uint64Value.zero,
+  ];
+
+  try {
+    return measureBenchmark(
+      name: 'portable Uint64Value field read/write',
+      operations: operations,
+      warmupOperations: _warmupCount(operations),
+      body: (count) {
+        var checksum = 0;
+        for (var index = 0; index < count; index++) {
+          final Uint64Value expected = values[index % values.length];
+          store.update(handle, (writer) {
+            writer.set(value, expected);
+          });
+          final Uint64Value actual = store.read(handle).get(value);
+          checksum ^= actual.highWord;
+          checksum ^= actual.lowWord;
+        }
+        return BenchmarkWorkResult(
+          emittedNotifications: 0,
+          coalescedNotifications: 0,
+          checksum: checksum,
+        );
+      },
+    );
+  } finally {
+    store.dispose();
   }
 }
 
@@ -252,6 +296,74 @@ BenchmarkResult _fieldFilteredDispatch(
         for (var index = 0; index < count; index++) {
           fixture.store.update(fixture.primary, (writer) {
             writer.set(schema.value, index.toDouble() + 0.75);
+          });
+        }
+        return BenchmarkWorkResult(
+          emittedNotifications: delivered,
+          coalescedNotifications: 0,
+          checksum: checksum,
+        );
+      },
+    );
+  } finally {
+    fixture.dispose();
+  }
+}
+
+BenchmarkResult _wideFieldFilteredDispatch(int operations) {
+  final fixture = _WideFixture();
+  final schema = fixture.schema;
+  final FieldSelection selected = schema.layout.selectionFor(
+    <Field<Object?>>[
+      schema.fields[0],
+      schema.fields[31],
+      schema.changedField,
+    ],
+  );
+  final FieldSelection notSelected = schema.layout.selectionFor(
+    <Field<Object?>>[
+      schema.fields[1],
+      schema.fields[32],
+    ],
+  );
+  var delivered = 0;
+  var checksum = 0;
+  var value = 0;
+
+  for (var index = 0; index < _subscriptionCount; index++) {
+    fixture.store.watch(
+      fixture.primary,
+      selection: selected,
+      listener: (change) {
+        delivered++;
+        if (!change.fieldSelection.contains(schema.changedField)) {
+          throw StateError('A selected wide field was not present in change.');
+        }
+        checksum ^= change.version;
+      },
+    );
+    fixture.store.watch(
+      fixture.primary,
+      selection: notSelected,
+      listener: (_) {
+        throw StateError(
+          'A non-matching wide selection received a changed-field update.',
+        );
+      },
+    );
+  }
+
+  try {
+    return measureBenchmark(
+      name: 'wide (63-field) selection dispatch',
+      operations: operations,
+      warmupOperations: _warmupCount(operations),
+      body: (count) {
+        delivered = 0;
+        checksum = 0;
+        for (var index = 0; index < count; index++) {
+          fixture.store.update(fixture.primary, (writer) {
+            writer.set(schema.changedField, ++value);
           });
         }
         return BenchmarkWorkResult(
@@ -459,6 +571,41 @@ final class _Fixture {
   }
 
   final _BenchmarkSchema schema;
+  final PulseStore store;
+  late final RecordHandle primary;
+
+  void dispose() {
+    store.dispose();
+  }
+}
+
+final class _WideBenchmarkSchema {
+  static const int fieldCount = 63;
+
+  final List<Uint32Field> fields = List<Uint32Field>.generate(
+    fieldCount,
+    (index) => Uint32Field('wide_value_$index'),
+    growable: false,
+  );
+
+  late final RecordLayout layout = RecordLayout(
+    name: 'WideBenchmarkRecord',
+    fields: fields,
+  );
+
+  Uint32Field get changedField => fields.last;
+}
+
+final class _WideFixture {
+  _WideFixture()
+      : store = PulseStore(
+          segmentCapacity: 256,
+          journalCapacity: 2048,
+        ) {
+    primary = store.allocate(schema.layout);
+  }
+
+  final _WideBenchmarkSchema schema = _WideBenchmarkSchema();
   final PulseStore store;
   late final RecordHandle primary;
 

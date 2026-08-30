@@ -1,10 +1,32 @@
 # Roadmap
 
-Version 0.2.0-beta.2 establishes a pure Dart data plane, a separately publishable Flutter adapter, deterministic bounded delivery behavior, and release-oriented verification. Future work should remain driven by measured workloads and preserve the ownership and lifecycle guarantees documented in this repository.
+Version 0.3.0-beta.1 builds on the pure Dart data plane, separately publishable Flutter
+adapter, deterministic bounded delivery behavior, and release-oriented
+verification established in the previous release line. Future work should
+remain driven by measured workloads and preserve the ownership and lifecycle
+guarantees documented in this repository.
+
+## Optional generated layouts
+
+The first-party
+[`pulse_slab_generator`](https://pub.dev/packages/pulse_slab_generator) package
+now provides
+an optional `build_runner` workflow for annotated immutable schemas. It emits
+stable field descriptors, precomputed layout metadata, typed store accessors,
+serializers, deserializers, and validation hooks for supported scalar and
+fixed-byte fields. Generated reads and writes address descriptors and offsets
+directly rather than using field-name lookup or runtime reflection.
+
+This workflow is deliberately not required: hand-authored `RecordLayout` and
+`Field` descriptors remain supported, and the core package keeps no generator
+or build-time dependency. Applications add the generator from pub.dev as a
+development dependency. The core supports Dart 3.6 or later; applications
+that add `pulse_slab_generator` need Dart 3.9 or later. Its
+[complete example](../packages/pulse_slab_generator/example/) documents the
+declaration and generation command.
 
 Potential future work includes:
 
-- Layout code generation for static field descriptors, serializers, and validation.
 - Native shared-memory backends with explicit ownership, synchronization, and isolate constraints.
 - C and Rust integration layers.
 - Atomic snapshot protocols for readers that need coordinated multi-record views.

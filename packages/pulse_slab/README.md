@@ -27,7 +27,7 @@ Use the release version selected on pub.dev:
 
 ```yaml
 dependencies:
-  pulse_slab: ^0.2.0-beta.2
+  pulse_slab: ^0.3.0-beta.1
 ```
 
 For local development in this repository, point a consuming package at `../packages/pulse_slab`.
@@ -88,7 +88,175 @@ store.release(sensor);
 store.dispose();
 ```
 
-Field descriptor names are metadata. Hot reads and writes use the stable descriptor and its resolved byte offset, not a string lookup. A layout permits at most 31 dirty-tracked fields because it uses a portable, non-negative integer field mask.
+Field descriptor names are metadata. Hot reads and writes use the stable descriptor and its resolved byte offset, not a string lookup.
+
+## Field selection for wide layouts
+
+Layouts with at most 31 fields retain the compact, non-negative integer-mask
+fast path used above: `Field.mask`, `RecordLayout.maskFor`, and
+`watch(fields: ...)` continue to work without a new representation or
+per-change selection allocation. Layouts can now contain more fields. For a
+wide layout, create a layout-scoped `FieldSelection` and pass it through the
+`selection:` parameter instead:
+
+```dart
+final metrics = List<Uint32Field>.generate(
+  63,
+  (index) => Uint32Field('metric_$index'),
+);
+final metricsLayout = RecordLayout(
+  name: 'Metrics',
+  fields: metrics,
+);
+final metricsStore = PulseStore();
+final metricsHandle = metricsStore.allocate(metricsLayout);
+
+final visibleMetrics = metricsLayout.selectionFor(<Field<Object?>>[
+  metrics[0],
+  metrics[31],
+  metrics[62],
+]);
+final metricsSubscription = metricsStore.watch(
+  metricsHandle,
+  selection: visibleMetrics,
+  listener: (change) {
+    if (change.fieldSelection.contains(metrics[62])) {
+      // Refresh the part of the view that consumes metric 62.
+    }
+  },
+);
+
+metricsSubscription.dispose();
+metricsStore.dispose();
+```
+
+`FieldSelection` is tied to its `RecordLayout`, so selections from unrelated
+layouts cannot be merged or compared. Use `Field.selection` when selecting one
+bound field, or `layout.selectionFor(...)` for a setup-time union. Do not use
+the legacy `Field.mask`, `layout.maskFor`, or `watch(fields: ...)` filtering
+APIs for a wide layout: they deliberately remain compact-only and reject a
+wide selection rather than truncate it.
+
+`RecordChange.fieldSelection` always reports the exact changed fields and is
+the portable change representation for a wide layout. Its integer
+`fieldMask` accessor throws for a wide change. Likewise, a wide
+`ChangeRecord` has a non-null `fieldSelection`, while accessing its
+`fieldMask` throws. Compact journal records continue to use their integer
+mask column.
+
+## Optional generated layouts
+
+The manual `RecordLayout` and `Field` API shown above remains fully supported
+and needs no build step. For stable schemas that benefit from generated
+boilerplate, add the first-party
+[`pulse_slab_generator`](https://pub.dev/packages/pulse_slab_generator) tool.
+It is an opt-in pub.dev development dependency: `pulse_slab` has no
+`build_runner` or generator dependency and continues to support Dart 3.6 or
+later, while `pulse_slab_generator` requires Dart 3.9 or later.
+
+```yaml
+dependencies:
+  pulse_slab: ^0.3.0-beta.1
+
+dev_dependencies:
+  build_runner: ^2.14.1
+  pulse_slab_generator: ^0.3.0-beta.1
+```
+
+The generator's own README contains the full hosted and local-development
+workflow. When developing local core and generator changes outside this
+repository's Pub workspace, add development-only overrides in the consuming
+app to keep both packages on the same checkout:
+
+```yaml
+dependency_overrides:
+  pulse_slab:
+    path: ../pulse_slab/packages/pulse_slab
+  pulse_slab_generator:
+    path: ../pulse_slab/packages/pulse_slab_generator
+```
+
+Annotate an immutable schema in the core package's public API and declare its
+generated part:
+
+```dart
+import 'package:pulse_slab/pulse_slab.dart';
+
+part 'sensor_state.g.dart';
+
+@SlabRecord(byteOrder: SlabByteOrder.little)
+final class SensorState {
+  const SensorState({required this.sequence, required this.identity});
+
+  @SlabField(kind: SlabFieldKind.uint32)
+  final int sequence;
+
+  @SlabField(kind: SlabFieldKind.fixedBytes, length: 16)
+  final Uint8List identity;
+}
+```
+
+Generate the part with:
+
+```sh
+dart run build_runner build
+```
+
+The generated `SensorStateLayout` provides stable typed descriptors,
+precomputed offsets, indexes, and size metadata, plus compact masks for layouts
+through 31 fields or exact selections for wider layouts. It also provides a
+singleton `RecordLayout`, typed store reads and writes, and `serialize`,
+`deserialize`, `validate`, and `validateBytes` helpers. Its hot reads and
+writes use the generated descriptors and offsets directly, with no field-name
+lookup or runtime reflection. Supported declarations cover integer and
+floating-point scalar fields, `Uint64Value`, `bool`, and fixed-length
+`Uint8List` fields; invalid declarations are reported by `build_runner`.
+Generated source is deterministic and may be checked in. See the
+[complete generated-layout example](https://pub.dev/packages/pulse_slab_generator/example)
+for the full workflow and API. Generated records use `final` fields and an
+unnamed generative constructor with matching `this.field` initializing formals,
+so a deserializer cannot transform an encoded value while rebuilding the
+object.
+
+## Portable unsigned 64-bit values
+
+Use `Uint64ValueField` when a value can use all 64 unsigned bits on both the
+Dart VM and JavaScript targets. `Uint64Value` keeps the exact bit pattern as
+two validated 32-bit words rather than converting it to one potentially lossy
+Dart `int`.
+
+```dart
+import 'dart:typed_data';
+
+import 'package:pulse_slab/pulse_slab.dart';
+
+final store = PulseStore();
+final counter = Uint64ValueField('counter');
+final counterLayout = RecordLayout(
+  name: 'Counter',
+  fields: <Field<Object?>>[counter],
+);
+final counterHandle = store.allocate(counterLayout);
+final value = Uint64Value.fromWords(
+  highWord: 0x80000000, // Bits 63 through 32.
+  lowWord: 0, // Bits 31 through 0.
+);
+
+store.update(counterHandle, (writer) {
+  writer.set(counter, value);
+});
+
+final Uint64Value current = store.read(counterHandle).get(counter);
+final bytesForWire = current.toBytes(byteOrder: Endian.big);
+
+store.dispose();
+```
+
+`compareTo` compares the high word and then the low word as an unsigned value.
+Use matching `Endian` values with `toBytes` and `Uint64Value.fromBytes` at a
+wire boundary. `Uint64Field` remains available without behavior changes for
+existing raw signed two's-complement `int` bit patterns; choose the new field
+for new portable identifiers, counters, and unsigned values.
 
 ## Delivery policies
 
@@ -96,9 +264,22 @@ Field descriptor names are metadata. Hot reads and writes use the stable descrip
 | --- | --- | --- |
 | `immediate` | Calls matching listeners immediately after a successful commit. | No normal queue; reentrant listener calls use a fixed replaceable queue. |
 | `latest` | Keeps only the latest merged state change per subscription until `flush()`. | One pending change per subscription. |
-| `batched` | Retains compact changes until `flush()`. | Fixed journal and subscription bounds. |
+| `batched` | Retains bounded state changes until `flush()`. | Fixed journal and subscription bounds. |
 
-Subscriptions are scoped to one handle and may filter by a field mask. Dispatch order is registration order. Removing a subscription during dispatch is safe; a removed listener will not be invoked later in the same dispatch. A listener may start a new transaction after the original commit. A reentrant immediate change commits synchronously but its immediate listener calls wait until the active traversal finishes. The fixed `maxReentrantImmediateDeliveries` queue replaces its oldest pending state delivery when full and increments `droppedReentrantImmediateDeliveryCount`; it never rejects a committed write. Reentrant `latest` and `batched` subscriptions are routed into their own bounded policy queues immediately, so their coalescing semantics are preserved. Latest and batched delivery retain changes until the next explicit flush. `flush()` rejects reentrant calls from a latest or batched delivery callback. Prefer deferring feedback loops when a flat callback sequence is easier to reason about.
+Subscriptions are scoped to one handle and may filter by a compact field mask or
+a wide `FieldSelection`. Dispatch order is registration order. Removing a
+subscription during dispatch is safe; a removed listener will not be invoked
+later in the same dispatch. A listener may start a new transaction after the
+original commit. A reentrant immediate change commits synchronously but its
+immediate listener calls wait until the active traversal finishes. The fixed
+`maxReentrantImmediateDeliveries` queue replaces its oldest pending state
+delivery when full and increments `droppedReentrantImmediateDeliveryCount`; it
+never rejects a committed write. Reentrant `latest` and `batched`
+subscriptions are routed into their own bounded policy queues immediately, so
+their coalescing semantics are preserved. Latest and batched delivery retain
+changes until the next explicit flush. `flush()` rejects reentrant calls from a
+latest or batched delivery callback. Prefer deferring feedback loops when a
+flat callback sequence is easier to reason about.
 
 If a queued reentrant immediate listener fails, the first failure is rethrown
 when the outermost delivery traversal completes. It never rolls back either
@@ -124,7 +305,7 @@ API:
 
 ~~~yaml
 dependencies:
-  pulse_slab_flutter: ^0.2.0-beta.2
+  pulse_slab_flutter: ^0.3.0-beta.1
 ~~~
 
 ~~~dart
@@ -135,8 +316,8 @@ import 'package:pulse_slab_flutter/pulse_slab_flutter.dart';
 uses frame-coalesced notification by default. A temperature-only builder does
 not rebuild when only `status` changes. The [Flutter telemetry example](https://github.com/JohannesHupp/pulse_slab/tree/main/packages/pulse_slab_flutter/example)
 simulates multiple sensors at configurable high update rates and displays
-processed input updates, UI deliveries, rebuilds, coalescing, and journal
-utilization.
+raw input updates, net committed record changes, transaction compaction, frame
+deliveries, rebuilds, coalescing, and bounded journal behavior.
 
 ## Background byte batches
 
@@ -163,7 +344,12 @@ The central principle is:
 
 > Process every important input, but deliver only the state changes that each consumer can use.
 
-This package reduces allocations and redundant work through typed byte storage, reusable slots, field masks, transaction merging, bounded journals, and targeted listener lists. The separate Flutter adapter adds frame coalescing. Those techniques are workload-specific trade-offs, not a claim that every application will be faster. Benchmark on the target device and workload.
+This package reduces allocations and redundant work through typed byte storage,
+reusable slots, compact masks or wide field selections, transaction merging,
+bounded journals, and targeted listener lists. The separate Flutter adapter
+adds frame coalescing. Those techniques are workload-specific trade-offs, not a
+claim that every application will be faster. Benchmark on the target device and
+workload.
 
 Run the included smoke benchmark:
 
@@ -179,9 +365,17 @@ dart test -p chrome test/web_portability_test.dart
 
 ## Current limitations
 
-- Fixed record layouts are runtime descriptors; code generation is planned but not included.
-- A layout is limited to 31 independently dirty-tracked fields so masks remain exact on native and JavaScript targets.
-- `Int64Field` and `Uint64Field` encode two 32-bit words, so the core remains runnable on Flutter web. Dart JavaScript cannot represent every 64-bit `int` exactly; use a fixed byte field for portable full-width identifiers, counters, or unsigned arithmetic. `Uint64Field` uses a signed two's-complement `int` bit pattern when the high bit is set.
+- Generated layouts are optional. Hand-authored `RecordLayout` and `Field`
+  descriptors remain the supported build-free API; projects that opt into
+  `pulse_slab_generator` need Dart 3.9 or later.
+- Integer-mask filtering is intentionally limited to compact layouts with at
+  most 31 fields. Wider layouts use layout-scoped `FieldSelection` values;
+  this preserves portable exactness at the cost of word-based selection work.
+- `Int64Field` and legacy `Uint64Field` encode two 32-bit words, so the core
+  remains runnable on Flutter web. `Uint64Field` keeps its signed
+  two's-complement `int` bit-pattern behavior for compatibility. Use
+  `Uint64ValueField` for new portable full-width unsigned identifiers,
+  counters, or comparisons.
 - Writes are single-isolate and single-writer; nested transactions are rejected, while listener-initiated follow-up transactions use the documented delivery policy semantics.
 - Transaction actions, record listeners, and invalidation callbacks are synchronous APIs.
 - The journal represents replaceable state, not lossless events.

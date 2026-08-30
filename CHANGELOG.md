@@ -1,16 +1,37 @@
 # Changelog
 
-Repository-level changes are summarized here. Each publishable package maintains its own changelog:
+Repository-level changes are summarized here. Each publishable package
+maintains its own changelog:
 
 - [`pulse_slab`](packages/pulse_slab/CHANGELOG.md)
+- [`pulse_slab_generator`](packages/pulse_slab_generator/CHANGELOG.md)
 - [`pulse_slab_flutter`](packages/pulse_slab_flutter/CHANGELOG.md)
+
+[`pulse_slab_generator`](packages/pulse_slab_generator/CHANGELOG.md) is an
+optional first-party pub.dev development dependency. It is released alongside
+compatible `pulse_slab` versions, while the manual runtime API stays build-free.
 
 ## Unreleased
 
+## 0.3.0-beta.1
+
+- Added the optional `pulse_slab_generator` pub.dev package for build-time
+  typed layouts, serializers, deserializers, and validation hooks. The Dart
+  3.6+ core retains its manual `RecordLayout` API and no build dependency.
+- Added portable `FieldSelection` filtering for layouts with more than 31
+  independently tracked fields while retaining the compact mask fast path.
+- Added `Uint64Value` and `Uint64ValueField` for exact portable unsigned
+  64-bit values, while retaining legacy `Uint64Field` raw-bit compatibility.
 - Create one package-specific GitHub Release after each successful tag-triggered
   pub.dev publication, marking semantic prereleases as GitHub pre-releases.
 - Add an idempotent manual workflow for backfilling GitHub Releases for existing
   package tags without calling pub.dev again.
+
+- Expanded the Flutter telemetry example with clearer state-update diagnostics,
+  sensor history views, and a rendered FPS indicator.
+- Added deterministic telemetry-example coverage and documentation for the
+  updated diagnostics.
+- Stabilized line endings for tracked Flutter desktop registrant files.
 
 ## 0.2.0-beta.2
 

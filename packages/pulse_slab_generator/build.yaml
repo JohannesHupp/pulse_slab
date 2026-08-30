@@ -1,0 +1,14 @@
+targets:
+  $default:
+    builders:
+      pulse_slab_generator|pulse_slab_layout:
+        enabled: true
+
+builders:
+  pulse_slab_layout:
+    import: 'package:pulse_slab_generator/pulse_slab_generator.dart'
+    builder_factories: ['pulseSlabLayoutBuilder']
+    build_extensions: {'.dart': ['.pulse_slab.g.part']}
+    auto_apply: dependents
+    build_to: cache
+    applies_builders: ['source_gen|combining_builder']
