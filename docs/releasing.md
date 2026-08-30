@@ -145,6 +145,10 @@ version fails the release-tag job rather than silently creating a non-versioned
 release. A maintenance-only merge that does not change a package directory
 succeeds without creating tags or publishing packages.
 
+If repository rules limit the number of refs that a push can update, allow at
+least three tag updates: a coordinated release can create the core, generator,
+and Flutter tags in one push.
+
 The existing repository-wide `0.1.0-alpha` tag is a legacy tag. It is preserved
 unchanged, does not match any package publishing trigger, and does not count as
 `pulse_slab-v0.1.0-alpha`, `pulse_slab_generator-v0.1.0-alpha`, or
@@ -183,14 +187,12 @@ GitHub Releases, and never calls pub.dev.
 ## Version policy
 
 Package versions on pub.dev are immutable. The initial manual publications
-have created pub.dev package records for `pulse_slab`,
-`pulse_slab_generator`, and `pulse_slab_flutter`, so later releases can use
-the trusted-publishing workflow once its GitHub and pub.dev settings are
-configured. `pulse_slab` and
-`pulse_slab_generator` `0.3.0-beta.1` are already published; their first
-matching tag jobs detect those artifacts and skip a second upload. The
-matching `pulse_slab_flutter` `0.3.0-beta.1` tag waits for the core dependency
-and publishes its still-unreleased adapter artifact. Versions with a
+created pub.dev package records for `pulse_slab` and
+`pulse_slab_generator`; trusted publishing then published the matching
+`pulse_slab_flutter` `0.3.0-beta.1` artifact. All three `0.3.0-beta.1`
+package tags and GitHub prereleases now exist. A generator-only correction is
+therefore prepared independently as `pulse_slab_generator 0.3.0-beta.2`, while
+its hosted dependency remains `pulse_slab ^0.3.0-beta.1`. Versions with a
 prerelease suffix, such as `0.3.0-beta.1`, create GitHub pre-releases. A
 version without one, such as `1.0.0`, creates a regular GitHub Release.
 
@@ -209,10 +211,8 @@ instantly visible.
 ## One-time maintainer setup
 
 The workflow files require this setup before the first automated release of a
-new package. The three current package records already exist on pub.dev, but
-maintainers must still confirm these settings before the release tag is
-created. Retain these steps when adding another publishable package or
-restoring the release environment:
+new package. It is complete for the three current packages; retain these steps
+when adding another publishable package or restoring the release environment:
 
 1. Publish the first version of each package manually from its source package
    directory. Pub.dev trusted publishing can automate later releases of an
@@ -233,7 +233,9 @@ restoring the release environment:
    branches and tags are restricted, allow the `main` branch for release-tag
    creation and all three tag patterns for publication:
    `pulse_slab-v*`, `pulse_slab_generator-v*`, and `pulse_slab_flutter-v*`.
-   Add required reviewers if release approval is desired.
+   If repository rules also limit ref updates per push, allow at least three
+   updates for a coordinated package release. Add required reviewers if release
+   approval is desired.
 4. Add `RELEASE_TAG_TOKEN` as an environment secret in `pub-dev`. It must be a
    fine-grained personal access token or GitHub App token that can write
    repository contents, including tags. The default `GITHUB_TOKEN` is not
@@ -243,12 +245,11 @@ restoring the release environment:
    short-lived credential used by pub.dev trusted publishing; no long-lived
    pub.dev token is stored in GitHub.
 
-The `pulse_slab` and `pulse_slab_generator` `0.3.0-beta.1` bootstrap
-publications are complete. Before merging the matching release to `main`,
-confirm that the GitHub `pub-dev` environment and each package's trusted
-publisher use the tag patterns above. The release workflow performs a dry-run
-before every upload, so invalid metadata or unexpected archive contents stop
-the release before publication.
+The `0.3.0-beta.1` release is complete for all three packages. Before merging
+any later release to `main`, confirm that the GitHub `pub-dev` environment and
+each package's trusted publisher use the tag patterns above. The release
+workflow performs a dry-run before every upload, so invalid metadata or
+unexpected archive contents stop the release before publication.
 
 ## Local release checks
 
