@@ -61,7 +61,7 @@ Use an explicit transaction when multiple field writes form one logical update. 
 
 | Delivery policy | Consumer behavior | Bound |
 | --- | --- | --- |
-| `immediate` | Matching listeners run after the commit. | No normal queue; reentrant listener calls use a fixed replaceable queue. |
+| `immediate` | Matching listeners run after the commit. | No normal queue; reentrant immediate calls during an active immediate traversal use a fixed replaceable queue. |
 | `latest` | Each subscription retains only its latest relevant change until a flush. | One pending change per subscription. |
 | `batched` | Matching state changes accumulate in arrival order until an explicit flush. | One fixed store-wide delivery ring; a full ring replaces its oldest pending delivery. |
 

@@ -132,9 +132,41 @@ final class StoreSubscription {
   var _pendingFieldMask = 0;
   FieldSelection? _pendingFieldSelection;
   var _pendingVersion = 0;
+  var _pendingDeliveries = 0;
+  var _deliveredCount = 0;
+  var _coalescedCount = 0;
+  var _droppedCount = 0;
 
   /// Whether the listener can still receive notifications.
   bool get isActive => _isActive;
+
+  /// Number of accepted deliveries currently waiting for this subscription.
+  ///
+  /// This is a live gauge rather than a cumulative counter. It is zero for
+  /// normal immediate delivery, at most one for [DeliveryPolicy.latest], and
+  /// can be greater for batched or reentrant immediate delivery. It becomes
+  /// zero when this subscription is disposed or invalidated.
+  int get pendingDeliveries => _pendingDeliveries;
+
+  /// Number of listener invocation attempts for this subscription.
+  ///
+  /// This monotonically increases even when the listener throws. Filtered
+  /// changes and cancelled pending work do not count as delivered.
+  int get deliveredCount => _deliveredCount;
+
+  /// Number of matching changes merged into an already pending latest delivery.
+  ///
+  /// This is a monotonic counter. It remains zero for immediate and batched
+  /// policies because they do not merge pending subscription deliveries.
+  int get coalescedCount => _coalescedCount;
+
+  /// Number of this subscription's pending deliveries evicted by a full
+  /// bounded delivery ring.
+  ///
+  /// This is a monotonic counter. It excludes latest coalescing, filtering,
+  /// journal overwrite or rejection, and lifecycle cancellation caused by
+  /// disposal or record release.
+  int get droppedCount => _droppedCount;
 
   /// Stops future notifications. Calling this more than once is safe.
   void dispose() {
@@ -164,6 +196,7 @@ final class StoreSubscription {
         _pendingFieldMask |= change.fieldMask;
       }
       _pendingVersion = change.version;
+      _coalescedCount++;
       return false;
     }
     _hasLatestPending = true;
@@ -173,6 +206,7 @@ final class StoreSubscription {
       _pendingFieldMask = change.fieldMask;
     }
     _pendingVersion = change.version;
+    _pendingDeliveries++;
     return true;
   }
 
@@ -196,6 +230,7 @@ final class StoreSubscription {
     _pendingFieldMask = 0;
     _pendingFieldSelection = null;
     _pendingVersion = 0;
+    _removePendingDelivery();
     return change;
   }
 
@@ -205,6 +240,29 @@ final class StoreSubscription {
     _pendingFieldMask = 0;
     _pendingFieldSelection = null;
     _pendingVersion = 0;
+    _pendingDeliveries = 0;
+  }
+
+  void _enqueuePendingDelivery() {
+    _pendingDeliveries++;
+  }
+
+  void _removePendingDelivery() {
+    if (_pendingDeliveries != 0) {
+      _pendingDeliveries--;
+    }
+  }
+
+  void _dropPendingDelivery() {
+    if (_pendingDeliveries == 0) {
+      return;
+    }
+    _pendingDeliveries--;
+    _droppedCount++;
+  }
+
+  void _recordDelivered() {
+    _deliveredCount++;
   }
 
   _ListenerFailure? _invalidate() {
@@ -348,7 +406,8 @@ final class PulseStore {
   /// Slot count used for every newly allocated segment.
   final int segmentCapacity;
 
-  /// Fixed maximum number of queued [DeliveryPolicy.batched] deliveries.
+  /// Fixed maximum number of queued [DeliveryPolicy.batched] deliveries across
+  /// all subscriptions in this store.
   final int maxBatchedDeliveries;
 
   /// Fixed maximum number of reentrant immediate listener deliveries awaiting
@@ -607,7 +666,15 @@ final class PulseStore {
   /// state deliveries in deterministic order.
   ///
   /// Call this from a render loop, a test, or another explicit scheduling
-  /// boundary. Changes submitted while a listener runs wait for the next call.
+  /// boundary. It snapshots latest queue membership before it starts, then
+  /// snapshots batched deliveries after latest callbacks complete. An earlier
+  /// latest callback can merge into a subscription that was already in the
+  /// latest snapshot, and that subscription receives the merged state in this
+  /// call. A subscription made latest-pending after the membership boundary
+  /// waits for the next call. Batched work created by a latest callback can run
+  /// in this call's batched phase; work created by a batched callback waits for
+  /// the next call.
+  ///
   /// Listener failures do not stop other eligible pending deliveries; the first
   /// failure is rethrown after both queues have been traversed.
   int flush() {
@@ -808,7 +875,11 @@ final class PulseStore {
     final _ImmediateDelivery delivery =
         _ImmediateDelivery(subscription, change);
     if (_reentrantImmediateLength == _reentrantImmediateQueue.length) {
+      final _ImmediateDelivery? evicted =
+          _reentrantImmediateQueue[_reentrantImmediateReadIndex];
+      evicted?.subscription._dropPendingDelivery();
       _reentrantImmediateQueue[_reentrantImmediateReadIndex] = delivery;
+      subscription._enqueuePendingDelivery();
       _reentrantImmediateReadIndex =
           _nextReentrantImmediateIndex(_reentrantImmediateReadIndex);
       _reentrantImmediateWriteIndex = _reentrantImmediateReadIndex;
@@ -816,6 +887,7 @@ final class PulseStore {
       return;
     }
     _reentrantImmediateQueue[_reentrantImmediateWriteIndex] = delivery;
+    subscription._enqueuePendingDelivery();
     _reentrantImmediateWriteIndex =
         _nextReentrantImmediateIndex(_reentrantImmediateWriteIndex);
     _reentrantImmediateLength++;
@@ -830,6 +902,7 @@ final class PulseStore {
     _reentrantImmediateQueue[index] = null;
     _reentrantImmediateReadIndex = _nextReentrantImmediateIndex(index);
     _reentrantImmediateLength--;
+    delivery?.subscription._removePendingDelivery();
     return delivery;
   }
 
@@ -896,6 +969,7 @@ final class PulseStore {
       return null;
     }
     _deliveredNotificationCount++;
+    subscription._recordDelivered();
     try {
       subscription._listener(change);
       return null;
@@ -907,13 +981,17 @@ final class PulseStore {
   void _enqueueBatched(StoreSubscription subscription, RecordChange change) {
     final _BatchedDelivery delivery = _BatchedDelivery(subscription, change);
     if (_batchedLength == _batchedQueue.length) {
+      final _BatchedDelivery? evicted = _batchedQueue[_batchedReadIndex];
+      evicted?.subscription._dropPendingDelivery();
       _batchedQueue[_batchedReadIndex] = delivery;
+      subscription._enqueuePendingDelivery();
       _batchedReadIndex = _nextBatchedIndex(_batchedReadIndex);
       _batchedWriteIndex = _batchedReadIndex;
       _droppedBatchedDeliveryCount++;
       return;
     }
     _batchedQueue[_batchedWriteIndex] = delivery;
+    subscription._enqueuePendingDelivery();
     _batchedWriteIndex = _nextBatchedIndex(_batchedWriteIndex);
     _batchedLength++;
   }
@@ -1032,6 +1110,7 @@ final class PulseStore {
     _batchedQueue[index] = null;
     _batchedReadIndex = _nextBatchedIndex(index);
     _batchedLength--;
+    delivery?.subscription._removePendingDelivery();
     return delivery;
   }
 

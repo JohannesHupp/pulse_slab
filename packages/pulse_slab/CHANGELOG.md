@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased
+
+- Documented the bounded `immediate`, `latest`, and `batched` state-delivery
+  contract, including reentrancy, flush, and lifecycle behavior.
+- Added allocation-free per-subscription `pendingDeliveries`, `deliveredCount`,
+  `coalescedCount`, and `droppedCount` diagnostics without changing delivery
+  policies or journal semantics.
+
 ## 0.3.0-beta.1
 
 - Aligned the core package release line with the Flutter adapter at `0.3.0-beta.1`.

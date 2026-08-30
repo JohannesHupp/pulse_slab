@@ -386,7 +386,7 @@ BenchmarkResult _frameStyleCoalescing(
   var delivered = 0;
   var checksum = 0;
 
-  fixture.store.watch(
+  final StoreSubscription subscription = fixture.store.watch(
     fixture.primary,
     fields: schema.value.mask,
     policy: DeliveryPolicy.latest,
@@ -405,7 +405,7 @@ BenchmarkResult _frameStyleCoalescing(
       body: (count) {
         delivered = 0;
         checksum = 0;
-        final beforeCoalesced = fixture.store.latestCoalescedDeliveryCount;
+        final beforeCoalesced = subscription.coalescedCount;
         for (var index = 0; index < count; index++) {
           fixture.store.update(fixture.primary, (writer) {
             writer.set(schema.value, index.toDouble() + 0.125);
@@ -417,8 +417,7 @@ BenchmarkResult _frameStyleCoalescing(
         fixture.store.flush();
         return BenchmarkWorkResult(
           emittedNotifications: delivered,
-          coalescedNotifications:
-              fixture.store.latestCoalescedDeliveryCount - beforeCoalesced,
+          coalescedNotifications: subscription.coalescedCount - beforeCoalesced,
           checksum: checksum,
         );
       },
