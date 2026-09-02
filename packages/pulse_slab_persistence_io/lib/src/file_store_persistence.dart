@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:collection';
 import 'dart:io';
 import 'dart:isolate';
 
@@ -870,8 +871,8 @@ final class _FileJournalWorker {
     required this.maxJournalBytes,
     required this.maxSegmentBytes,
     required this.lock,
-    required this.segments,
-    required this.pendingFrames,
+    required List<_JournalSegment> segments,
+    required List<_JournalFrame> pendingFrames,
     required this.pendingBytes,
     required this.journalBytes,
     required this.nextSequence,
@@ -879,7 +880,8 @@ final class _FileJournalWorker {
     required this.nextAcknowledgementGeneration,
     required this.nextAcknowledgementSlot,
     required this.acknowledgementSequences,
-  });
+  })  : segments = ListQueue<_JournalSegment>.of(segments),
+        pendingFrames = ListQueue<_JournalFrame>.of(pendingFrames);
 
   static Future<_FileJournalWorker> open(_WorkerBootstrap bootstrap) async {
     final Directory directory = Directory(bootstrap.directoryPath);
@@ -948,8 +950,8 @@ final class _FileJournalWorker {
   final int maxJournalBytes;
   final int maxSegmentBytes;
   final RandomAccessFile lock;
-  final List<_JournalSegment> segments;
-  final List<_JournalFrame> pendingFrames;
+  final ListQueue<_JournalSegment> segments;
+  final ListQueue<_JournalFrame> pendingFrames;
   int pendingBytes;
   int journalBytes;
   int nextSequence;
@@ -960,6 +962,7 @@ final class _FileJournalWorker {
   RandomAccessFile? _activeJournal;
   _JournalSegment? _activeSegment;
   int? _outstandingSequence;
+  var _hasUnflushedJournalWrites = false;
   var _closed = false;
 
   int get activeSegmentBytes => _activeSegment?.byteLength ?? 0;
@@ -1049,7 +1052,12 @@ final class _FileJournalWorker {
       await _sealActiveSegment();
       await _createSegment(sequenceValue);
     }
-    final Uint8List header = _encodeJournalHeader(sequenceValue, bytes);
+    final int checksum = _checksum(bytes);
+    final Uint8List header = _encodeJournalHeader(
+      sequenceValue,
+      bytes.lengthInBytes,
+      checksum,
+    );
     final _JournalSegment segment = _activeSegment!;
     final RandomAccessFile journal = _activeJournal!;
     final int offset = segment.byteLength;
@@ -1063,19 +1071,27 @@ final class _FileJournalWorker {
         segment: segment,
         payloadOffset: offset + _journalFrameHeaderLength,
         payloadLength: bytes.lengthInBytes,
-        checksum: _checksum(bytes),
+        checksum: checksum,
       ),
     );
     pendingBytes += bytes.lengthInBytes;
     journalBytes += frameBytes;
+    _hasUnflushedJournalWrites = true;
     nextSequence++;
   }
 
   Future<Map<String, Object?>> _flush() async {
-    final RandomAccessFile? journal = _activeJournal;
-    if (journal != null) {
-      await journal.flush();
+    if (!_hasUnflushedJournalWrites) {
+      return const <String, Object?>{};
     }
+    final RandomAccessFile? journal = _activeJournal;
+    if (journal == null) {
+      throw const _JournalIntegrityException(
+        'Journal writes are pending without an active journal file.',
+      );
+    }
+    await journal.flush();
+    _hasUnflushedJournalWrites = false;
     return const <String, Object?>{};
   }
 
@@ -1129,7 +1145,7 @@ final class _FileJournalWorker {
     // An acknowledgement is durable only after its capture bytes are durable.
     await _flush();
     await _persistAcknowledgement(sequenceValue);
-    final _JournalFrame frame = pendingFrames.removeAt(0);
+    final _JournalFrame frame = pendingFrames.removeFirst();
     pendingBytes -= frame.payloadLength;
     acknowledgedSequence = sequenceValue;
     _outstandingSequence = null;
@@ -1194,10 +1210,25 @@ final class _FileJournalWorker {
     }
     final _JournalSegment segment = segments.last;
     if (segment.byteLength >= maxSegmentBytes) {
+      // A process can terminate after filling its active segment but before
+      // sealing it. Establish its durability boundary without retaining it as
+      // active, so acknowledged full segments remain reclaimable immediately.
+      final RandomAccessFile journal = await File(segment.path).open(
+        mode: FileMode.append,
+      );
+      try {
+        await journal.flush();
+      } finally {
+        await journal.close();
+      }
       return;
     }
     _activeJournal = await File(segment.path).open(mode: FileMode.append);
     _activeSegment = segment;
+    // Recovery cannot prove that bytes observed from an unclosed prior worker
+    // crossed the native durability boundary. Force that boundary before an
+    // acknowledgement can advance or this segment is sealed.
+    _hasUnflushedJournalWrites = true;
   }
 
   Future<void> _createSegment(int firstSequence) async {
@@ -1238,7 +1269,10 @@ final class _FileJournalWorker {
     if (journal == null) {
       return;
     }
-    await journal.flush();
+    if (_hasUnflushedJournalWrites) {
+      await journal.flush();
+      _hasUnflushedJournalWrites = false;
+    }
     await journal.close();
     _activeJournal = null;
     _activeSegment = null;
@@ -1302,7 +1336,7 @@ final class _FileJournalWorker {
         // reserved until a later recovery or acknowledgement can reclaim it.
         break;
       }
-      segments.removeAt(0);
+      segments.removeFirst();
       journalBytes -= segment.byteLength;
       reclaimedBytes += segment.byteLength;
     }
@@ -1746,7 +1780,11 @@ Future<void> _rejectLegacyJournalFiles(
   }
 }
 
-Uint8List _encodeJournalHeader(int sequence, Uint8List payload) {
+Uint8List _encodeJournalHeader(
+  int sequence,
+  int payloadLength,
+  int checksum,
+) {
   final Uint8List bytes = Uint8List(_journalFrameHeaderLength);
   final ByteData data = ByteData.sublistView(bytes);
   data.setUint32(0, _journalMagic, Endian.big);
@@ -1754,8 +1792,8 @@ Uint8List _encodeJournalHeader(int sequence, Uint8List payload) {
   data.setUint8(5, 0);
   data.setUint16(6, 0, Endian.big);
   data.setUint64(8, sequence, Endian.big);
-  data.setUint32(16, payload.lengthInBytes, Endian.big);
-  data.setUint32(20, _checksum(payload), Endian.big);
+  data.setUint32(16, payloadLength, Endian.big);
+  data.setUint32(20, checksum, Endian.big);
   return bytes;
 }
 

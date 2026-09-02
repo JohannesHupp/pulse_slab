@@ -96,6 +96,127 @@ void main() {
       await persistence.replayConsumer.acknowledge(delivery);
     });
 
+    test('recovers only unacknowledged captures after take and acknowledge',
+        () async {
+      final Directory directory = await _temporaryDirectory();
+      addTearDown(() => directory.delete(recursive: true));
+
+      final ProcessResult writer = await Process.run(
+        Platform.resolvedExecutable,
+        <String>[
+          'run',
+          'test/fixtures/take_ack_unclosed_journal.dart',
+          directory.path,
+        ],
+        workingDirectory: Directory.current.path,
+      );
+      expect(
+        writer.exitCode,
+        0,
+        reason: 'Unclosed replay writer failed: ${writer.stderr}',
+      );
+
+      final FileStorePersistence persistence = await FileStorePersistence.open(
+        directory: directory,
+      );
+      addTearDown(persistence.close);
+      final StorePersistenceReplayDelivery delivery =
+          (await persistence.replayConsumer.take())!;
+      expect(delivery.sequence, 2);
+      expect(_snapshotBytes(delivery.batch), orderedEquals(<int>[2, 7, 1]));
+      await persistence.replayConsumer.acknowledge(delivery);
+      expect(await persistence.replayConsumer.take(), isNull);
+    });
+
+    test('recovers a full unclosed final segment without delaying reclamation',
+        () async {
+      final Directory directory = await _temporaryDirectory();
+      addTearDown(() => directory.delete(recursive: true));
+      final StoreCaptureBatch batch = _snapshotBatch(1, <int>[4, 8]);
+      final int payloadBytes = batch.encode().lengthInBytes;
+      final int maxSegmentBytes = 48 + payloadBytes;
+
+      final ProcessResult writer = await Process.run(
+        Platform.resolvedExecutable,
+        <String>[
+          'run',
+          'test/fixtures/write_full_unclosed_journal.dart',
+          directory.path,
+        ],
+        workingDirectory: Directory.current.path,
+      );
+      expect(
+        writer.exitCode,
+        0,
+        reason: 'Full unclosed writer failed: ${writer.stderr}',
+      );
+
+      final FileStorePersistence persistence = await FileStorePersistence.open(
+        directory: directory,
+        maxPendingBytes: payloadBytes * 2,
+        maxJournalBytes: maxSegmentBytes * 2,
+        maxSegmentBytes: maxSegmentBytes,
+      );
+      addTearDown(persistence.close);
+
+      for (var sequence = 1; sequence <= 2; sequence++) {
+        final StorePersistenceReplayDelivery delivery =
+            (await persistence.replayConsumer.take())!;
+        expect(delivery.sequence, sequence);
+        await persistence.replayConsumer.acknowledge(delivery);
+      }
+      expect(persistence.pendingBytes, 0);
+      expect(persistence.journalBytes, maxSegmentBytes);
+
+      persistence.append(_snapshotBatch(3, <int>[4, 8]));
+      final StorePersistenceReplayDelivery third =
+          (await persistence.replayConsumer.take())!;
+      expect(third.sequence, 3);
+      await persistence.replayConsumer.acknowledge(third);
+
+      expect(persistence.pendingBytes, 0);
+      expect(persistence.journalBytes, maxSegmentBytes);
+      expect(await _journalSegmentFiles(directory), hasLength(1));
+    });
+
+    test('drains a large ordered journal and reclaims closed segments',
+        () async {
+      const int captureCount = 128;
+      const int capturesPerSegment = 16;
+      final Directory directory = await _temporaryDirectory();
+      addTearDown(() => directory.delete(recursive: true));
+      final StoreCaptureBatch batch = _snapshotBatch(1, <int>[9]);
+      final int payloadBytes = batch.encode().lengthInBytes;
+      final int frameBytes = 24 + payloadBytes;
+      final int maxSegmentBytes = 24 + capturesPerSegment * frameBytes;
+      final int segmentCount = captureCount ~/ capturesPerSegment;
+      final FileStorePersistence persistence = await FileStorePersistence.open(
+        directory: directory,
+        maxPendingBytes: payloadBytes * captureCount,
+        maxJournalBytes: maxSegmentBytes * segmentCount,
+        maxSegmentBytes: maxSegmentBytes,
+      );
+      addTearDown(persistence.close);
+
+      for (var index = 1; index <= captureCount; index++) {
+        persistence.append(_snapshotBatch(index, <int>[9]));
+      }
+      await persistence.flush();
+      expect(await _journalSegmentFiles(directory), hasLength(segmentCount));
+
+      for (var sequence = 1; sequence <= captureCount; sequence++) {
+        final StorePersistenceReplayDelivery delivery =
+            (await persistence.replayConsumer.take())!;
+        expect(delivery.sequence, sequence);
+        await persistence.replayConsumer.acknowledge(delivery);
+      }
+
+      expect(persistence.pendingBytes, 0);
+      expect(await persistence.replayConsumer.take(), isNull);
+      expect(await _journalSegmentFiles(directory), hasLength(1));
+      expect(persistence.journalBytes, maxSegmentBytes);
+    });
+
     test('rejects a capture that cannot fit into an empty segment', () async {
       final Directory directory = await _temporaryDirectory();
       addTearDown(() => directory.delete(recursive: true));

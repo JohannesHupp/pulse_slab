@@ -315,13 +315,13 @@ final class TransactionRecordWriter {
 
   /// The current record version. It advances when the transaction commits.
   int get version {
-    _state._ensureWritable();
+    _state._ensureActive();
     return _state._store._memory.versionOf(handle);
   }
 
   /// Reads the in-transaction value of [field].
   T get<T>(Field<T> field) {
-    _state._ensureWritable();
+    _state._ensureActive();
     return _pending.writer.get(field);
   }
 
@@ -338,7 +338,7 @@ final class TransactionRecordWriter {
   /// whose final encoded bytes differ from their bytes before the transaction
   /// began.
   FieldMask get changedMask {
-    _state._ensureWritable();
+    _state._ensureActive();
     return _pending.writer.changedMask;
   }
 
@@ -347,7 +347,7 @@ final class TransactionRecordWriter {
   /// This works for layouts of any width. The committed change is still more
   /// precise because it removes fields restored before commit.
   FieldSelection get changedFieldSelection {
-    _state._ensureWritable();
+    _state._ensureActive();
     return _pending.writer.changedFieldSelection;
   }
 }
@@ -469,6 +469,7 @@ final class PulseStore {
   static final Expando<Object> _persistenceOwners = Expando<Object>(
     'PulseStore.persistenceOwner',
   );
+  static final Object _persistenceCaptureSentinel = Object();
   final Map<RecordHandle, _SubscriptionBucket> _subscriptionBuckets =
       <RecordHandle, _SubscriptionBucket>{};
   final List<StoreSubscription> _latestQueue = <StoreSubscription>[];
@@ -477,7 +478,10 @@ final class PulseStore {
   final _TransactionScratchArena _transactionScratch =
       _TransactionScratchArena();
 
-  _TransactionState? _activeTransaction;
+  // A real [_TransactionState] protects a transaction. The private sentinel
+  // temporarily applies the same access gate while a lifecycle capture is
+  // synchronously admitted, without adding a persistence branch to reads.
+  Object? _activeTransaction;
   var _batchedReadIndex = 0;
   var _batchedWriteIndex = 0;
   var _batchedLength = 0;
@@ -568,7 +572,7 @@ final class PulseStore {
         _persistenceLayouts!;
     layouts[handle] = persistenceLayout;
     try {
-      _appendPersistence(
+      _appendLifecyclePersistence(
         StoreCaptureBatch.incremental(
           <StoreCaptureOperation>[
             _captureSnapshot(handle, persistenceLayout, version: 0),
@@ -613,7 +617,7 @@ final class PulseStore {
       if (layout == null) {
         throw StateError('Missing persistence metadata for $handle.');
       }
-      _appendPersistence(
+      _appendLifecyclePersistence(
         StoreCaptureBatch.incremental(
           <StoreCaptureOperation>[
             StoreCaptureRelease(record: _captureRecordId(handle)),
@@ -670,7 +674,11 @@ final class PulseStore {
     late R result;
     try {
       result = action(WriteTransaction._(state));
-      state.freezeUserAccess();
+      // No caller code may use retained transaction facades after the action
+      // returns. Closing the existing transaction state here keeps that
+      // guarantee during synchronous persistence admission without a separate
+      // per-field persistence predicate.
+      state.deactivate();
       if (result is Future<Object?>) {
         // The call throws synchronously, so this rejected future has no normal
         // caller. Ignore a later writer-lifetime failure instead of surfacing
@@ -722,7 +730,7 @@ final class PulseStore {
         ),
       );
     }
-    _appendPersistence(StoreCaptureBatch.checkpoint(snapshots));
+    _appendLifecyclePersistence(StoreCaptureBatch.checkpoint(snapshots));
   }
 
   /// Convenience wrapper for one synchronous controlled record update.
@@ -856,7 +864,6 @@ final class PulseStore {
   }
 
   void _ensureOpen() {
-    _ensureNoPersistenceReentrancy('access the store');
     if (_isDisposed) {
       throw const StoreDisposedException('The PulseStore is disposed.');
     }
@@ -880,7 +887,6 @@ final class PulseStore {
   }
 
   void _ensureRetainedReaderAccess() {
-    _ensureNoPersistenceReentrancy('access a retained record reader');
     if (_activeTransaction != null) {
       throw StateError(
         'Cannot access a retained record reader while a PulseStore '
@@ -989,6 +995,16 @@ final class PulseStore {
       persistence.append(batch);
     } finally {
       _isCapturingPersistence = false;
+    }
+  }
+
+  void _appendLifecyclePersistence(StoreCaptureBatch batch) {
+    assert(_activeTransaction == null);
+    _activeTransaction = _persistenceCaptureSentinel;
+    try {
+      _appendPersistence(batch);
+    } finally {
+      _activeTransaction = null;
     }
   }
 
@@ -1330,11 +1346,10 @@ final class _TransactionState {
       LinkedHashMap<RecordHandle, _PendingWrite>();
   final List<RecordChange> _committedChanges = <RecordChange>[];
   var _isActive = true;
-  var _acceptsUserAccess = true;
   var _prepared = false;
 
   TransactionRecordWriter writerFor(RecordHandle handle) {
-    _ensureWritable();
+    _ensureActive();
     _store._memory.validateHandle(handle);
     final _PendingWrite pending = _pending.putIfAbsent(
       handle,
@@ -1344,7 +1359,7 @@ final class _TransactionState {
   }
 
   bool _set<T>(_PendingWrite pending, Field<T> field, T value) {
-    _ensureWritable();
+    _ensureActive();
     if (!pending.writer.wouldChange(field, value)) {
       return false;
     }
@@ -1357,7 +1372,6 @@ final class _TransactionState {
   }
 
   void prepareCommit() {
-    _ensureActive();
     if (_prepared) {
       throw StateError('The transaction commit was already prepared.');
     }
@@ -1428,11 +1442,6 @@ final class _TransactionState {
     _prepared = true;
   }
 
-  void freezeUserAccess() {
-    _ensureActive();
-    _acceptsUserAccess = false;
-  }
-
   FieldMask _netChangedMask(_PendingWrite pending) {
     final FieldMask changedMask = pending.writer.changedMask;
     if (changedMask == 0) {
@@ -1486,7 +1495,6 @@ final class _TransactionState {
 
   void deactivate() {
     _isActive = false;
-    _acceptsUserAccess = false;
   }
 
   _ListenerFailure? publish() {
@@ -1499,16 +1507,6 @@ final class _TransactionState {
   void _ensureActive() {
     if (!_isActive) {
       throw StateError('This transaction is no longer active.');
-    }
-  }
-
-  void _ensureWritable() {
-    _ensureActive();
-    if (!_acceptsUserAccess) {
-      throw StateError(
-        'This transaction action has already returned; its writers are no '
-        'longer usable.',
-      );
     }
   }
 }

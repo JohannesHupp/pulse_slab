@@ -82,20 +82,7 @@ typedef StorePersistenceLayoutResolver = StorePersistenceLayout Function(
 final class StorePersistenceLayout {
   /// Creates persisted layout metadata.
   StorePersistenceLayout({required this.identity, this.version = 1}) {
-    if (identity.trim().isEmpty) {
-      throw ArgumentError.value(
-        identity,
-        'identity',
-        'Must not be empty.',
-      );
-    }
-    if (version <= 0 || version > _maximumUint32) {
-      throw RangeError.value(
-        version,
-        'version',
-        'Must be a positive unsigned 32-bit integer.',
-      );
-    }
+    _validateStorePersistenceLayout(identity, version);
   }
 
   /// Stable application-defined layout identity.
@@ -103,6 +90,12 @@ final class StorePersistenceLayout {
 
   /// Positive application-defined schema version for [identity].
   final int version;
+
+  // Layout metadata is stable for the lifetime of a configured persistent
+  // record. Encoding it once avoids repeated string-to-byte work on each
+  // captured update while keeping the public layout value immutable.
+  late final Uint8List _encodedIdentity =
+      Uint8List.fromList(utf8.encode(identity));
 
   @override
   bool operator ==(Object other) =>
@@ -315,17 +308,12 @@ final class StoreCaptureBatch {
 final class StoreCaptureCodec {
   /// Encodes [batch] into an independently owned binary buffer.
   static Uint8List encode(StoreCaptureBatch batch) {
-    final List<Uint8List?> identities =
-        List<Uint8List?>.filled(batch.operations.length, null);
     var length = 10;
     for (var index = 0; index < batch.operations.length; index++) {
       final StoreCaptureOperation operation = batch.operations[index];
       length += 13;
       if (operation case StoreCaptureSnapshot snapshot) {
-        final Uint8List identity = Uint8List.fromList(
-          utf8.encode(snapshot.layout.identity),
-        );
-        identities[index] = identity;
+        final Uint8List identity = snapshot.layout._encodedIdentity;
         length += 4 + identity.length + 4 + 8 + 4 + snapshot._bytes.length;
       }
       if (length > _maximumUint32) {
@@ -352,7 +340,7 @@ final class StoreCaptureCodec {
       if (operation case StoreCaptureSnapshot snapshot) {
         data.setUint8(offset++, 1);
         offset = _writeRecordId(data, offset, snapshot.record);
-        final Uint8List identity = identities[index]!;
+        final Uint8List identity = snapshot.layout._encodedIdentity;
         offset = _writeBytes(data, offset, identity);
         offset = _writeUint32(data, offset, snapshot.layout.version);
         offset = _writeVersion(data, offset, snapshot.version);
@@ -539,6 +527,23 @@ int _writeBytes(ByteData data, int offset, Uint8List bytes) {
 void _validateUint32(int value, String name) {
   if (value < 0 || value > _maximumUint32) {
     throw RangeError.value(value, name, 'Must be an unsigned 32-bit integer.');
+  }
+}
+
+void _validateStorePersistenceLayout(String identity, int version) {
+  if (identity.trim().isEmpty) {
+    throw ArgumentError.value(
+      identity,
+      'identity',
+      'Must not be empty.',
+    );
+  }
+  if (version <= 0 || version > _maximumUint32) {
+    throw RangeError.value(
+      version,
+      'version',
+      'Must be a positive unsigned 32-bit integer.',
+    );
   }
 }
 
