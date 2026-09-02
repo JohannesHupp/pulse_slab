@@ -1,6 +1,6 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:pulse_slab_flutter/pulse_slab_flutter.dart';
-import 'package:pulse_slab_flutter_example/src/telemetry_simulation.dart';
+import 'package:pulse_slab_flutter_telemetry_demo/src/telemetry_simulation.dart';
 
 void main() {
   group('TelemetrySimulation', () {

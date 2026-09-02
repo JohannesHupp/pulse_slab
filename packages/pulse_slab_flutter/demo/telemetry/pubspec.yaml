@@ -1,4 +1,4 @@
-name: pulse_slab_flutter_example
+name: pulse_slab_flutter_telemetry_demo
 description: A focused Flutter telemetry simulation for the pulse_slab_flutter adapter.
 publish_to: none
 version: 0.3.0-beta.1
@@ -12,7 +12,7 @@ dependencies:
   flutter:
     sdk: flutter
   pulse_slab_flutter:
-    path: ../
+    path: ../../
 
 dev_dependencies:
   flutter_lints: ^5.0.0

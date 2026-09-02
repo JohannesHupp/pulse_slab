@@ -12,7 +12,7 @@ Add the adapter to a Flutter application:
 
 ~~~yaml
 dependencies:
-  pulse_slab_flutter: ^0.3.0-beta.1
+  pulse_slab_flutter: ^0.3.0-beta.2
 ~~~
 
 The adapter depends on pulse_slab and re-exports its public Dart API. Import one
@@ -23,7 +23,7 @@ import 'package:pulse_slab_flutter/pulse_slab_flutter.dart';
 ~~~
 
 For local development in this repository, run `dart pub get` from the
-repository root. Its Pub workspace resolves the adjacent 0.3.0-beta.1 core package
+repository root. Its Pub workspace resolves the adjacent 0.3.0-beta.3 core package
 without an override file. The repository release automation publishes
 `pulse_slab` before this adapter and waits until the required core version is
 available from pub.dev.
@@ -58,6 +58,17 @@ most once per rendered frame. Use FlutterDeliveryPolicy.manual and flush on the
 underlying ReactiveRecordListenable for deterministic widget tests or an
 externally managed render loop.
 
+## Examples
+
+The published [minimal Flutter template](example) creates one typed record,
+updates it from a button, and renders its latest committed value with
+`ReactiveRecordBuilder`. Copy its `lib/main.dart` into an application that has
+this package as a dependency.
+
+The source-only [telemetry integration demo](demo/telemetry) drives multiple
+records at configurable high rates. It is useful for profiling and integration
+testing, but is not included in the pub.dev archive.
+
 ## Layouts with more than 31 fields
 
 The legacy `fields:` argument is an integer-mask fast path and remains the
@@ -90,15 +101,6 @@ makes unexpected record lifetime violations visible during development.
   segmented memory, transactions, subscriptions, journals, and worker support.
 - pulse_slab_flutter contains Flutter framework imports and UI-plane adapters
   only.
-
-The [telemetry example](example) drives multiple records at configurable rates
-up to 1,000,000 updates per second. It distinguishes raw producer inputs,
-net committed record changes, transaction compaction, frame delivery,
-frame coalescing, widget rebuilds, and bounded journal behavior. Its controls
-also demonstrate why a sampled-and-cleared journal can show stable utilization
-while a retained pressure journal eventually overwrites or rejects observations.
-The example also includes per-sensor charts and an FPS indicator for inspecting
-UI behavior at high input rates.
 
 ## Limitations
 

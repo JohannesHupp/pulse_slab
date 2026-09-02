@@ -40,6 +40,8 @@ jobs:
         run: dart analyze
       - name: Run VM unit and integration tests
         run: dart test
+      - name: Run core developer example
+        run: dart run example/pulse_slab_core_example.dart
       - name: Run Chrome portability integration test
         run: dart test -p chrome test/web_portability_test.dart
 
@@ -62,11 +64,13 @@ jobs:
       - name: Resolve workspace dependencies
         run: dart pub get
       - name: Verify formatting
-        run: dart format --output=none --set-exit-if-changed lib test
+        run: dart format --output=none --set-exit-if-changed lib test example
       - name: Analyze persistence I/O package
         run: dart analyze
       - name: Run VM unit and integration tests
         run: dart test
+      - name: Run persistence I/O developer example
+        run: dart run example/file_store_persistence_example.dart
 
   persistence_io_platform_tests:
     name: Native persistence I/O platform tests (${{ matrix.os }})
@@ -92,7 +96,7 @@ jobs:
       - name: Resolve workspace dependencies
         run: dart pub get
       - name: Verify formatting
-        run: dart format --output=none --set-exit-if-changed lib test
+        run: dart format --output=none --set-exit-if-changed lib test example
       - name: Analyze persistence I/O package
         run: dart analyze
       - name: Run VM unit and integration tests
@@ -148,19 +152,43 @@ jobs:
       - name: Resolve workspace dependencies
         run: flutter pub get
       - name: Verify formatting
-        run: dart format --output=none --set-exit-if-changed lib test
+        run: dart format --output=none --set-exit-if-changed lib test example
       - name: Analyze Flutter adapter
         run: flutter analyze
       - name: Run Flutter adapter tests
         run: flutter test --no-pub
 
-  flutter_example_tests:
+  flutter_minimal_example_tests:
+    name: Flutter minimal example tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: packages/pulse_slab_flutter
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+      - name: Resolve workspace dependencies
+        run: flutter pub get
+      - name: Verify example formatting
+        run: dart format --output=none --set-exit-if-changed example
+      - name: Analyze minimal Flutter example
+        run: flutter analyze example
+      - name: Run minimal Flutter example test
+        run: flutter test --no-pub example/test/widget_test.dart
+
+  flutter_telemetry_demo_tests:
     name: Flutter telemetry integration tests
     runs-on: ubuntu-latest
     timeout-minutes: 20
     defaults:
       run:
-        working-directory: packages/pulse_slab_flutter/example
+        working-directory: packages/pulse_slab_flutter/demo/telemetry
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
@@ -187,7 +215,8 @@ jobs:
       - persistence_io_tests
       - persistence_io_platform_tests
       - flutter_adapter_tests
-      - flutter_example_tests
+      - flutter_minimal_example_tests
+      - flutter_telemetry_demo_tests
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -257,12 +286,30 @@ jobs:
         run: dart tools/prepare_publish_packages.dart
       - name: Verify publication snapshot example policy
         run: |
-          test ! -d publish/packages/pulse_slab/example
-          test -d publish/packages/pulse_slab_persistence_io
-          test ! -d publish/packages/pulse_slab_persistence_io/example
-          test ! -d publish/packages/pulse_slab_flutter/example
-          test -d publish/packages/pulse_slab_generator/example
+          test -f publish/packages/pulse_slab/example/pulse_slab_core_example.dart
+          test -f publish/packages/pulse_slab/example/README.md
+          test -f publish/packages/pulse_slab_persistence_io/example/file_store_persistence_example.dart
+          test -f publish/packages/pulse_slab_persistence_io/example/README.md
+          test -f publish/packages/pulse_slab_flutter/example/lib/main.dart
+          test -f publish/packages/pulse_slab_flutter/example/README.md
+          test ! -d publish/packages/pulse_slab_flutter/example/test
+          test ! -d publish/packages/pulse_slab_flutter/demo
+          test -f publish/packages/pulse_slab_generator/example/main.dart
+          test -f publish/packages/pulse_slab_generator/example/README.md
           test -f publish/packages/pulse_slab_generator/build.yaml
+          for package in pulse_slab pulse_slab_persistence_io pulse_slab_generator pulse_slab_flutter; do
+            ! find "publish/packages/$package/example" -type d \( \
+              -name benchmark -o \
+              -name fixtures -o \
+              -name integration_test -o \
+              -name test -o \
+              -name tool \
+            \) -print -quit | grep -q .
+            ! find "publish/packages/$package/example" -type f \( \
+              -name test.dart -o \
+              -name '*_test.dart' \
+            \) -print -quit | grep -q .
+          done
       - name: Copy publication snapshot outside the Git checkout
         env:
           PUBLISH_WORKSPACE: ${{ runner.temp }}/pulse-slab-publish
@@ -272,12 +319,30 @@ jobs:
           mkdir -p "$PUBLISH_WORKSPACE"
           cp -a publish/. "$PUBLISH_WORKSPACE/"
           test -f "$PUBLISH_WORKSPACE/pubspec.yaml"
-          test ! -d "$PUBLISH_WORKSPACE/packages/pulse_slab/example"
-          test -d "$PUBLISH_WORKSPACE/packages/pulse_slab_persistence_io"
-          test ! -d "$PUBLISH_WORKSPACE/packages/pulse_slab_persistence_io/example"
-          test ! -d "$PUBLISH_WORKSPACE/packages/pulse_slab_flutter/example"
-          test -d "$PUBLISH_WORKSPACE/packages/pulse_slab_generator/example"
+          test -f "$PUBLISH_WORKSPACE/packages/pulse_slab/example/pulse_slab_core_example.dart"
+          test -f "$PUBLISH_WORKSPACE/packages/pulse_slab/example/README.md"
+          test -f "$PUBLISH_WORKSPACE/packages/pulse_slab_persistence_io/example/file_store_persistence_example.dart"
+          test -f "$PUBLISH_WORKSPACE/packages/pulse_slab_persistence_io/example/README.md"
+          test -f "$PUBLISH_WORKSPACE/packages/pulse_slab_flutter/example/lib/main.dart"
+          test -f "$PUBLISH_WORKSPACE/packages/pulse_slab_flutter/example/README.md"
+          test ! -d "$PUBLISH_WORKSPACE/packages/pulse_slab_flutter/example/test"
+          test ! -d "$PUBLISH_WORKSPACE/packages/pulse_slab_flutter/demo"
+          test -f "$PUBLISH_WORKSPACE/packages/pulse_slab_generator/example/main.dart"
+          test -f "$PUBLISH_WORKSPACE/packages/pulse_slab_generator/example/README.md"
           test -f "$PUBLISH_WORKSPACE/packages/pulse_slab_generator/build.yaml"
+          for package in pulse_slab pulse_slab_persistence_io pulse_slab_generator pulse_slab_flutter; do
+            ! find "$PUBLISH_WORKSPACE/packages/$package/example" -type d \( \
+              -name benchmark -o \
+              -name fixtures -o \
+              -name integration_test -o \
+              -name test -o \
+              -name tool \
+            \) -print -quit | grep -q .
+            ! find "$PUBLISH_WORKSPACE/packages/$package/example" -type f \( \
+              -name test.dart -o \
+              -name '*_test.dart' \
+            \) -print -quit | grep -q .
+          done
       - name: Resolve isolated publication dependencies
         working-directory: ${{ runner.temp }}/pulse-slab-publish
         run: flutter pub get

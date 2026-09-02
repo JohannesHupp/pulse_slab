@@ -45,13 +45,14 @@ flowchart LR
 `.github/workflows/ci.yml` runs for pushes to every branch, pull requests, and
 manual dispatches. It runs in this order:
 
-1. Core VM unit and integration tests, including the browser portability test.
+1. Core VM unit and integration tests, its runnable developer example, and the
+   browser portability test.
 2. Native persistence VM unit and integration tests on Ubuntu, macOS, and
-   Windows.
+   Windows, plus its runnable developer example on Ubuntu.
 3. Generator formatting, analysis, generated-source freshness, unit and
    generated-source tests, and its complete runnable example.
-4. Flutter adapter unit and widget tests.
-5. Flutter telemetry example integration tests.
+4. Flutter adapter unit and widget tests, plus the minimal published template.
+5. Flutter telemetry demo integration tests.
 6. LCOV collection for the core, native persistence, and Flutter adapter.
 7. A compact Markdown coverage table added to the GitHub Actions job summary,
    plus the raw reports as a workflow artifact.
@@ -66,9 +67,9 @@ the underlying LCOV report supplies branch records; Dart and Flutter test
 coverage commonly reports those values as `N/A`. Coverage is a measurement and
 review signal; this workflow does not enforce an arbitrary percentage threshold.
 
-The generator archive retains its compact runnable example so pub.dev can
-display the complete declared-schema workflow. Core, native persistence, and
-Flutter examples stay out of their publication archives.
+Each archive retains a compact developer example: the core, native persistence,
+generator, and Flutter packages all publish their supported starting points.
+The high-rate Flutter telemetry demo stays outside the archive.
 
 ## Publication snapshot
 
@@ -96,14 +97,14 @@ publish/
     `-- pulse_slab_flutter/
 ~~~
 
-The generator example is retained; core, native persistence, and Flutter
-example directories are excluded. The snapshot is a reviewable, independently
-resolvable package workspace. It is not committed. CI copies it to the runner's
-temporary directory before resolving dependencies, validating the archives, or
-publishing. That detached copy has no Git checkout as an ancestor, so Pub
-validates the exact staged files without being affected by a working-tree status
-check. The source package `.pubignore` files remain a second safeguard for files
-that must stay out of the actual pub.dev archives.
+The core, native persistence, generator, and Flutter compact examples are
+retained. The Flutter telemetry demo is excluded. The snapshot is a reviewable,
+independently resolvable package workspace. It is not committed. CI copies it to
+the runner's temporary directory before resolving dependencies, validating the
+archives, or publishing. That detached copy has no Git checkout as an ancestor,
+so Pub validates the exact staged files without being affected by a
+working-tree status check. The source package `.pubignore` files remain a
+second safeguard for files that must stay out of the actual pub.dev archives.
 
 For a local archive check, copy the generated snapshot outside the repository
 before running Pub:
@@ -183,10 +184,9 @@ regular GitHub Releases.
 The publication and creation jobs are idempotent: an existing GitHub Release
 is reused, and every package publication job detects an already-published
 version after its dry-run and skips the immutable second upload. This also
-allows an earlier manual bootstrap publication to receive its normal tag and
-GitHub Release later. If only a release-creation job fails after pub.dev
-publication, rerun that failed job; it does not rerun the immutable package
-upload.
+allows a manually bootstrapped publication to receive its normal tag and GitHub
+Release later. If only a release-creation job fails after pub.dev publication,
+rerun that failed job; it does not rerun the immutable package upload.
 
 For tags created before this automation existed, use the **Backfill GitHub
 package releases** workflow from `main`. Provide one or more comma- or
@@ -201,21 +201,10 @@ GitHub Releases, and never calls pub.dev.
 
 ## Version policy
 
-Package versions on pub.dev are immutable. The initial manual publications
-created pub.dev package records for `pulse_slab` and
-`pulse_slab_generator`; trusted publishing then published the matching
-`pulse_slab_flutter` `0.3.0-beta.1` artifact. The native persistence package
-uses the same bootstrap and trusted-publishing process before its first
-automated release. A generator-only correction is therefore prepared
-independently as `pulse_slab_generator 0.3.0-beta.2`, while its hosted
-dependency remains `pulse_slab ^0.3.0-beta.1`. Versions with a prerelease
-suffix, such as `0.3.0-beta.1`, create GitHub pre-releases. A version without
-one, such as `1.0.0`, creates a regular GitHub Release.
-
-The first stable public release is planned as `1.0.0`, without a `-beta`
-suffix. Once that version is released, it is immutable on pub.dev. Later
-prerelease work, if needed, must use a subsequent version rather than changing
-the `1.0.0` release.
+Package versions on pub.dev are immutable. Every release must use a new
+package version and matching changelog heading. Versions with a prerelease
+suffix, such as `0.3.0-beta.1`, create GitHub pre-releases. Versions without a
+prerelease suffix, such as `1.0.0`, create regular GitHub Releases.
 
 The native persistence package, Flutter adapter, and generator have normal
 hosted dependencies on `pulse_slab`. Before publishing any of their tags, the
@@ -230,11 +219,10 @@ An I/O-only release can therefore proceed independently while the core source is
 unchanged. If the core source has advanced, update the I/O package's lower bound
 to the matching core release before tagging it.
 
-The first `pulse_slab_persistence_io` release must be coordinated with a core
-release that exports the persistence contracts it imports. Its
-`pulse_slab` lower-bound constraint must name that core release before either
-package is tagged; workspace resolution alone is not a substitute for this
-hosted-package check.
+Every `pulse_slab_persistence_io` release must target a core release that
+exports the persistence contracts it imports. Its `pulse_slab` lower-bound
+constraint must name that core release before either package is tagged;
+workspace resolution alone is not a substitute for this hosted-package check.
 
 ## One-time maintainer setup
 
@@ -275,8 +263,7 @@ the release environment:
    short-lived credential used by pub.dev trusted publishing; no long-lived
    pub.dev token is stored in GitHub.
 
-The `0.3.0-beta.1` release is complete for the three existing published
-packages. Before merging a release to `main`, confirm that the GitHub `pub-dev`
+Before merging a release to `main`, confirm that the GitHub `pub-dev`
 environment and each package's trusted publisher use the tag patterns above.
 The release workflow performs a dry-run before every upload, so invalid metadata
 or unexpected archive contents stop the release before publication.
@@ -293,15 +280,17 @@ dart format --output=none --set-exit-if-changed lib test benchmark example ../..
 dart analyze
 dart test
 dart test -p chrome test/web_portability_test.dart
+dart run example/pulse_slab_core_example.dart
 dart test --coverage=coverage
 dart run coverage:format_coverage --lcov --in=coverage --out=coverage/lcov.info --package=. --report-on=lib
 flutter pub publish --dry-run
 Pop-Location
 
 Push-Location packages/pulse_slab_persistence_io
-dart format --output=none --set-exit-if-changed lib test
+dart format --output=none --set-exit-if-changed lib test example
 dart analyze
 dart test
+dart run example/file_store_persistence_example.dart
 dart test --coverage=coverage
 dart run coverage:format_coverage --lcov --in=coverage --out=coverage/lcov.info --package=. --report-on=lib
 dart pub publish --dry-run
@@ -319,14 +308,17 @@ dart pub publish --dry-run
 Pop-Location
 
 Push-Location packages/pulse_slab_flutter
-dart format --output=none --set-exit-if-changed lib test
+dart format --output=none --set-exit-if-changed lib test example
 flutter analyze
 flutter test --no-pub
+flutter analyze example
+flutter test --no-pub example/test/widget_test.dart
 flutter test --coverage
 flutter pub publish --dry-run
 Pop-Location
 
-Push-Location packages/pulse_slab_flutter/example
+Push-Location packages/pulse_slab_flutter/demo/telemetry
+flutter pub get
 dart format --output=none --set-exit-if-changed lib test
 flutter analyze
 flutter test --no-pub

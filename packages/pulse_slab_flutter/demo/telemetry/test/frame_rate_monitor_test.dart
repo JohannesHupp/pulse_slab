@@ -1,7 +1,7 @@
 import 'dart:ui' show FrameTiming, TimingsCallback;
 
 import 'package:flutter_test/flutter_test.dart';
-import 'package:pulse_slab_flutter_example/src/frame_rate_monitor.dart';
+import 'package:pulse_slab_flutter_telemetry_demo/src/frame_rate_monitor.dart';
 
 void main() {
   group('FrameRateAccumulator', () {
