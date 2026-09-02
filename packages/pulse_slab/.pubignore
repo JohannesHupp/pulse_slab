@@ -5,6 +5,10 @@ build/
 coverage/
 pubspec.lock
 benchmark/
-example/
+example/benchmark/
+example/fixtures/
+example/integration_test/
+example/test/
+example/tool/
 test/
 tool/

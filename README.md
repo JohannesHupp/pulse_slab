@@ -65,8 +65,9 @@ runtime package remains compatible with Dart 3.6 or later.
 |   |-- pulse_slab/               # Pure Dart, independently publishable core
 |   |-- pulse_slab_persistence_io/  # Optional native file-persistence backend
 |   |-- pulse_slab_generator/     # Optional typed-layout code generator
-|   `-- pulse_slab_flutter/       # Flutter adapter and telemetry example
-|       `-- example/              # Independently runnable Flutter application
+|   `-- pulse_slab_flutter/       # Flutter adapter
+|       |-- example/              # Compact pub.dev developer template
+|       `-- demo/telemetry/       # Source-only integration and profiling app
 |-- .github/workflows/            # CI for all packages and the example
 `-- tools/                        # Repository maintenance tooling
 ```
@@ -80,13 +81,13 @@ documentation](docs/architecture.md).
 ## Release automation
 
 Every push and pull request runs core, native persistence, generator, Flutter
-adapter, and telemetry-example tests before coverage collection and publication
-validation. Generator verification includes a checked-in generated-source
-freshness check and its runnable example. The GitHub Actions summary includes a
-compact core, native-persistence, and Flutter-adapter coverage table, and the
-workflow uploads an isolated `publish/` artifact containing all four pub.dev
-packages. The generator's compact, runnable Dart example is retained in its
-archive; the core, native persistence, and Flutter examples remain excluded.
+adapter, minimal Flutter template, and telemetry-demo tests before coverage
+collection and publication validation. Generator verification includes a
+checked-in generated-source freshness check and its runnable example. The
+GitHub Actions summary includes a compact core, native-persistence, and
+Flutter-adapter coverage table, and the workflow uploads an isolated `publish/`
+artifact containing all four pub.dev packages. Each archive retains its compact
+developer example; the high-rate Flutter telemetry demo remains source-only.
 
 A verified push to `main` creates versioned package tags only for existing
 publishable packages whose package version changed in that push. Those tags
@@ -103,7 +104,7 @@ pub.dev; each future package requires the same bootstrap before its first
 release. Before a release, maintainers confirm the trusted-publisher and GitHub
 environment settings. They then release by updating the relevant package
 version and changelog, then merging the release change to `main`. The telemetry
-application remains a repository component and is never published.
+application remains a source-only repository component and is never published.
 
 Repository and issue tracker:
 
@@ -125,13 +126,15 @@ dart format --output=none --set-exit-if-changed .
 dart analyze
 dart test
 dart test -p chrome test/web_portability_test.dart
+dart run example/pulse_slab_core_example.dart
 dart pub publish --dry-run
 
 # Optional native file-persistence backend
 cd ../pulse_slab_persistence_io
-dart format --output=none --set-exit-if-changed lib test
+dart format --output=none --set-exit-if-changed lib test example
 dart analyze
 dart test
+dart run example/file_store_persistence_example.dart
 dart pub publish --dry-run
 
 # Optional build-time generator
@@ -147,13 +150,16 @@ dart pub publish --dry-run
 
 # Flutter adapter
 cd ../pulse_slab_flutter
-dart format --output=none --set-exit-if-changed .
+dart format --output=none --set-exit-if-changed lib test example
 flutter analyze
 flutter test
+flutter analyze example
+flutter test --no-pub example/test/widget_test.dart
 dart pub publish --dry-run
 
-# Flutter telemetry example
-cd example
+# Flutter telemetry demo
+cd demo/telemetry
+flutter pub get
 dart format --output=none --set-exit-if-changed lib test
 flutter analyze
 flutter test

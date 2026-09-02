@@ -49,8 +49,26 @@ jobs:
           mkdir -p "$PUBLISH_WORKSPACE"
           cp -a publish/. "$PUBLISH_WORKSPACE/"
           test -f "$PUBLISH_WORKSPACE/pubspec.yaml"
-          test ! -d "$PUBLISH_WORKSPACE/packages/pulse_slab/example"
-          test ! -d "$PUBLISH_WORKSPACE/packages/pulse_slab_flutter/example"
+          test -f "$PUBLISH_WORKSPACE/packages/pulse_slab/example/pulse_slab_core_example.dart"
+          test -f "$PUBLISH_WORKSPACE/packages/pulse_slab/example/README.md"
+          test -f "$PUBLISH_WORKSPACE/packages/pulse_slab_persistence_io/example/file_store_persistence_example.dart"
+          test -f "$PUBLISH_WORKSPACE/packages/pulse_slab_persistence_io/example/README.md"
+          test -f "$PUBLISH_WORKSPACE/packages/pulse_slab_flutter/example/lib/main.dart"
+          test -f "$PUBLISH_WORKSPACE/packages/pulse_slab_flutter/example/README.md"
+          test ! -d "$PUBLISH_WORKSPACE/packages/pulse_slab_flutter/example/test"
+          test ! -d "$PUBLISH_WORKSPACE/packages/pulse_slab_flutter/demo"
+          test -f "$PUBLISH_WORKSPACE/packages/pulse_slab_generator/example/main.dart"
+          test -f "$PUBLISH_WORKSPACE/packages/pulse_slab_generator/example/README.md"
+          test -f "$PUBLISH_WORKSPACE/packages/pulse_slab_generator/build.yaml"
+          for package in pulse_slab pulse_slab_persistence_io pulse_slab_generator pulse_slab_flutter; do
+            ! find "$PUBLISH_WORKSPACE/packages/$package/example" -type d \( \
+              -name benchmark -o \
+              -name fixtures -o \
+              -name integration_test -o \
+              -name test -o \
+              -name tool \
+            \) -print -quit | grep -q .
+          done
 
       - name: Resolve the isolated workspace
         working-directory: ${{ runner.temp }}/pulse-slab-publish
@@ -187,8 +205,26 @@ jobs:
           mkdir -p "$PUBLISH_WORKSPACE"
           cp -a publish/. "$PUBLISH_WORKSPACE/"
           test -f "$PUBLISH_WORKSPACE/pubspec.yaml"
-          test -d "$PUBLISH_WORKSPACE/packages/pulse_slab_persistence_io"
-          test ! -d "$PUBLISH_WORKSPACE/packages/pulse_slab_persistence_io/example"
+          test -f "$PUBLISH_WORKSPACE/packages/pulse_slab/example/pulse_slab_core_example.dart"
+          test -f "$PUBLISH_WORKSPACE/packages/pulse_slab/example/README.md"
+          test -f "$PUBLISH_WORKSPACE/packages/pulse_slab_persistence_io/example/file_store_persistence_example.dart"
+          test -f "$PUBLISH_WORKSPACE/packages/pulse_slab_persistence_io/example/README.md"
+          test -f "$PUBLISH_WORKSPACE/packages/pulse_slab_flutter/example/lib/main.dart"
+          test -f "$PUBLISH_WORKSPACE/packages/pulse_slab_flutter/example/README.md"
+          test ! -d "$PUBLISH_WORKSPACE/packages/pulse_slab_flutter/example/test"
+          test ! -d "$PUBLISH_WORKSPACE/packages/pulse_slab_flutter/demo"
+          test -f "$PUBLISH_WORKSPACE/packages/pulse_slab_generator/example/main.dart"
+          test -f "$PUBLISH_WORKSPACE/packages/pulse_slab_generator/example/README.md"
+          test -f "$PUBLISH_WORKSPACE/packages/pulse_slab_generator/build.yaml"
+          for package in pulse_slab pulse_slab_persistence_io pulse_slab_generator pulse_slab_flutter; do
+            ! find "$PUBLISH_WORKSPACE/packages/$package/example" -type d \( \
+              -name benchmark -o \
+              -name fixtures -o \
+              -name integration_test -o \
+              -name test -o \
+              -name tool \
+            \) -print -quit | grep -q .
+          done
 
       - name: Resolve the isolated workspace
         working-directory: ${{ runner.temp }}/pulse-slab-publish
@@ -368,10 +404,26 @@ jobs:
           mkdir -p "$PUBLISH_WORKSPACE"
           cp -a publish/. "$PUBLISH_WORKSPACE/"
           test -f "$PUBLISH_WORKSPACE/pubspec.yaml"
-          test ! -d "$PUBLISH_WORKSPACE/packages/pulse_slab/example"
-          test ! -d "$PUBLISH_WORKSPACE/packages/pulse_slab_flutter/example"
-          test -d "$PUBLISH_WORKSPACE/packages/pulse_slab_generator/example"
+          test -f "$PUBLISH_WORKSPACE/packages/pulse_slab/example/pulse_slab_core_example.dart"
+          test -f "$PUBLISH_WORKSPACE/packages/pulse_slab/example/README.md"
+          test -f "$PUBLISH_WORKSPACE/packages/pulse_slab_persistence_io/example/file_store_persistence_example.dart"
+          test -f "$PUBLISH_WORKSPACE/packages/pulse_slab_persistence_io/example/README.md"
+          test -f "$PUBLISH_WORKSPACE/packages/pulse_slab_flutter/example/lib/main.dart"
+          test -f "$PUBLISH_WORKSPACE/packages/pulse_slab_flutter/example/README.md"
+          test ! -d "$PUBLISH_WORKSPACE/packages/pulse_slab_flutter/example/test"
+          test ! -d "$PUBLISH_WORKSPACE/packages/pulse_slab_flutter/demo"
+          test -f "$PUBLISH_WORKSPACE/packages/pulse_slab_generator/example/main.dart"
+          test -f "$PUBLISH_WORKSPACE/packages/pulse_slab_generator/example/README.md"
           test -f "$PUBLISH_WORKSPACE/packages/pulse_slab_generator/build.yaml"
+          for package in pulse_slab pulse_slab_persistence_io pulse_slab_generator pulse_slab_flutter; do
+            ! find "$PUBLISH_WORKSPACE/packages/$package/example" -type d \( \
+              -name benchmark -o \
+              -name fixtures -o \
+              -name integration_test -o \
+              -name test -o \
+              -name tool \
+            \) -print -quit | grep -q .
+          done
 
       - name: Resolve the isolated workspace
         working-directory: ${{ runner.temp }}/pulse-slab-publish
@@ -532,8 +584,26 @@ jobs:
           mkdir -p "$PUBLISH_WORKSPACE"
           cp -a publish/. "$PUBLISH_WORKSPACE/"
           test -f "$PUBLISH_WORKSPACE/pubspec.yaml"
-          test ! -d "$PUBLISH_WORKSPACE/packages/pulse_slab/example"
-          test ! -d "$PUBLISH_WORKSPACE/packages/pulse_slab_flutter/example"
+          test -f "$PUBLISH_WORKSPACE/packages/pulse_slab/example/pulse_slab_core_example.dart"
+          test -f "$PUBLISH_WORKSPACE/packages/pulse_slab/example/README.md"
+          test -f "$PUBLISH_WORKSPACE/packages/pulse_slab_persistence_io/example/file_store_persistence_example.dart"
+          test -f "$PUBLISH_WORKSPACE/packages/pulse_slab_persistence_io/example/README.md"
+          test -f "$PUBLISH_WORKSPACE/packages/pulse_slab_flutter/example/lib/main.dart"
+          test -f "$PUBLISH_WORKSPACE/packages/pulse_slab_flutter/example/README.md"
+          test ! -d "$PUBLISH_WORKSPACE/packages/pulse_slab_flutter/example/test"
+          test ! -d "$PUBLISH_WORKSPACE/packages/pulse_slab_flutter/demo"
+          test -f "$PUBLISH_WORKSPACE/packages/pulse_slab_generator/example/main.dart"
+          test -f "$PUBLISH_WORKSPACE/packages/pulse_slab_generator/example/README.md"
+          test -f "$PUBLISH_WORKSPACE/packages/pulse_slab_generator/build.yaml"
+          for package in pulse_slab pulse_slab_persistence_io pulse_slab_generator pulse_slab_flutter; do
+            ! find "$PUBLISH_WORKSPACE/packages/$package/example" -type d \( \
+              -name benchmark -o \
+              -name fixtures -o \
+              -name integration_test -o \
+              -name test -o \
+              -name tool \
+            \) -print -quit | grep -q .
+          done
 
       - name: Resolve the isolated workspace
         working-directory: ${{ runner.temp }}/pulse-slab-publish

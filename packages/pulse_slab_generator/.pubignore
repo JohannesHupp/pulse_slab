@@ -3,6 +3,11 @@
 .pub/
 build/
 coverage/
+example/benchmark/
+example/fixtures/
+example/integration_test/
+example/test/
+example/tool/
 pubspec.lock
 test/
 pubspec_overrides.yaml

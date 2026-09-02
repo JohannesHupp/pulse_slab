@@ -1,10 +1,10 @@
 # Flutter generates these tracked desktop registrants. Keep their line endings
 # stable across hosts so a normal `flutter pub get` does not create noise-only
 # working-tree changes on Windows.
-packages/pulse_slab_flutter/example/linux/flutter/generated_plugin_registrant.cc text eol=lf
-packages/pulse_slab_flutter/example/linux/flutter/generated_plugin_registrant.h text eol=lf
-packages/pulse_slab_flutter/example/linux/flutter/generated_plugins.cmake text eol=lf
-packages/pulse_slab_flutter/example/macos/Flutter/GeneratedPluginRegistrant.swift text eol=lf
-packages/pulse_slab_flutter/example/windows/flutter/generated_plugin_registrant.cc text eol=lf
-packages/pulse_slab_flutter/example/windows/flutter/generated_plugin_registrant.h text eol=lf
-packages/pulse_slab_flutter/example/windows/flutter/generated_plugins.cmake text eol=lf
+packages/pulse_slab_flutter/demo/telemetry/linux/flutter/generated_plugin_registrant.cc text eol=lf
+packages/pulse_slab_flutter/demo/telemetry/linux/flutter/generated_plugin_registrant.h text eol=lf
+packages/pulse_slab_flutter/demo/telemetry/linux/flutter/generated_plugins.cmake text eol=lf
+packages/pulse_slab_flutter/demo/telemetry/macos/Flutter/GeneratedPluginRegistrant.swift text eol=lf
+packages/pulse_slab_flutter/demo/telemetry/windows/flutter/generated_plugin_registrant.cc text eol=lf
+packages/pulse_slab_flutter/demo/telemetry/windows/flutter/generated_plugin_registrant.h text eol=lf
+packages/pulse_slab_flutter/demo/telemetry/windows/flutter/generated_plugins.cmake text eol=lf

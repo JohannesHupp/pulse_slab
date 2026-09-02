@@ -24,9 +24,10 @@ Run checks for the optional native persistence package from
 
 ~~~powershell
 cd packages/pulse_slab_persistence_io
-dart format --output=none --set-exit-if-changed lib test
+dart format --output=none --set-exit-if-changed lib test example
 dart analyze
 dart test
+dart run example/file_store_persistence_example.dart
 dart pub publish --dry-run
 ~~~
 
@@ -44,9 +45,10 @@ dart run example/main.dart
 dart pub publish --dry-run
 ~~~
 
-Run Flutter adapter and telemetry example checks from
-`packages/pulse_slab_flutter` and `packages/pulse_slab_flutter/example`.
-The root README contains the complete verification command set.
+Run Flutter adapter and minimal-template checks from
+`packages/pulse_slab_flutter`; run the source-only telemetry demo checks from
+`packages/pulse_slab_flutter/demo/telemetry`. The root README contains the
+complete verification command set.
 
 ## Publication staging
 
@@ -59,10 +61,9 @@ dart tools/prepare_publish_packages.dart
 The command replaces the repository-local `publish/` directory after checking
 that it is a safe direct child of the repository. The staged workspace contains
 `packages/pulse_slab`, `packages/pulse_slab_persistence_io`,
-`packages/pulse_slab_generator`, and `packages/pulse_slab_flutter`. The compact
-generator example is retained for pub.dev; the core, native persistence, and
-Flutter example directories are excluded, and the adapter's nested example
-workspace entry is removed. It is the reviewable publication artifact uploaded
+`packages/pulse_slab_generator`, and `packages/pulse_slab_flutter`. Each
+package's compact developer example is retained for pub.dev. The Flutter
+telemetry demo is excluded. It is the reviewable publication artifact uploaded
 by CI; do not commit generated `publish/` output.
 
 CI copies this snapshot to the runner's temporary directory before resolving

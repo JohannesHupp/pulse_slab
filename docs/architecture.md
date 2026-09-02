@@ -107,7 +107,7 @@ flowchart TB
   Generator --> Generated[Typed descriptors, layouts, serializers, validators]
   Generated --> CorePublic
 
-  Example[Telemetry example] --> FlutterPublic
+  TelemetryDemo[Source-only telemetry demo] --> FlutterPublic
 ```
 
 Implementation details stay under each package's `lib/src` directory. The core public entry point exports only data-plane concepts. The Flutter public entry point exports the core API plus Flutter-specific adapters. The generator is an optional third package and is executed by `build_runner`; it remains outside the runtime dependency graph.

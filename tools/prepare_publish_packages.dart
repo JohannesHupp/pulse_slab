@@ -2,10 +2,10 @@ import 'dart:io';
 
 /// Creates an isolated Pub workspace for the four publishable packages.
 ///
-/// The staged workspace excludes examples by default, while retaining the
-/// generator's compact runnable example for its pub.dev package. It is safe to
-/// run repeatedly: only the repository-local `publish` directory is replaced
-/// after its path and type have been validated.
+/// The staged workspace retains only the compact developer examples intended
+/// for each pub.dev package. It is safe to run repeatedly: only the
+/// repository-local `publish` directory is replaced after its path and type
+/// have been validated.
 void main(List<String> arguments) {
   try {
     if (arguments.length == 1 && arguments.single == '--clean') {
@@ -62,11 +62,13 @@ const List<_PackageDefinition> _packages = <_PackageDefinition>[
     name: 'pulse_slab',
     sourcePath: 'packages/pulse_slab',
     stagingPath: 'packages/pulse_slab',
+    includeExample: true,
   ),
   _PackageDefinition(
     name: 'pulse_slab_persistence_io',
     sourcePath: 'packages/pulse_slab_persistence_io',
     stagingPath: 'packages/pulse_slab_persistence_io',
+    includeExample: true,
   ),
   _PackageDefinition(
     name: 'pulse_slab_generator',
@@ -78,6 +80,7 @@ const List<_PackageDefinition> _packages = <_PackageDefinition>[
     name: 'pulse_slab_flutter',
     sourcePath: 'packages/pulse_slab_flutter',
     stagingPath: 'packages/pulse_slab_flutter',
+    includeExample: true,
   ),
 ];
 
@@ -124,6 +127,29 @@ const Set<String> _excludedFileNames = <String>{
   'pubspec.lock',
   'pubspec_overrides.yaml',
 };
+
+const Set<String> _excludedExampleDirectoryNames = <String>{
+  '.dart_tool',
+  '.git',
+  '.idea',
+  '.pub',
+  '.vscode',
+  'android',
+  'benchmark',
+  'build',
+  'coverage',
+  'fixtures',
+  'integration_test',
+  'ios',
+  'linux',
+  'macos',
+  'test',
+  'tool',
+  'web',
+  'windows',
+};
+
+const Set<String> _compactExampleRootDirectoryNames = <String>{'lib'};
 
 Directory _findRepositoryRoot() {
   final File script = File.fromUri(Platform.script);
@@ -263,10 +289,17 @@ void _stagePackage({
       }
       if (_publishableDirectoryNames.contains(normalizedName) ||
           keepPackageExample) {
-        _copyDirectory(
-          source: Directory(entry.path),
-          destination: Directory(_join(destinationDirectory.path, name)),
-        );
+        if (keepPackageExample) {
+          _copyCompactExampleDirectory(
+            source: Directory(entry.path),
+            destination: Directory(_join(destinationDirectory.path, name)),
+          );
+        } else {
+          _copyDirectory(
+            source: Directory(entry.path),
+            destination: Directory(_join(destinationDirectory.path, name)),
+          );
+        }
       }
       continue;
     }
@@ -341,6 +374,62 @@ void _copyDirectory({
       File(entry.path).copySync(_join(destination.path, name));
     }
   }
+}
+
+/// Copies the portable source files that make up a pub.dev developer example.
+///
+/// Examples may be run locally beside generated Flutter tooling or integration
+/// fixtures. The staged archive carries only root Dart files, an optional
+/// `lib/` tree, and its README, so platform scaffolding, caches, and test
+/// harnesses cannot become published examples accidentally.
+bool _copyCompactExampleDirectory({
+  required Directory source,
+  required Directory destination,
+  bool isExampleRoot = true,
+}) {
+  final List<FileSystemEntity> entries = source.listSync(followLinks: false)
+    ..sort(
+      (FileSystemEntity left, FileSystemEntity right) =>
+          left.path.compareTo(right.path),
+    );
+
+  var copiedFile = false;
+  for (final FileSystemEntity entry in entries) {
+    final String name = _basename(entry.path);
+    final String normalizedName = name.toLowerCase();
+    final FileSystemEntityType type = FileSystemEntity.typeSync(
+      entry.path,
+      followLinks: false,
+    );
+
+    if (type == FileSystemEntityType.link) {
+      throw _StagingException(
+        'Refusing to stage symbolic link ${_displayPath(entry.path)}.',
+      );
+    }
+    if (type == FileSystemEntityType.directory) {
+      if (_excludedExampleDirectoryNames.contains(normalizedName) ||
+          (isExampleRoot &&
+              !_compactExampleRootDirectoryNames.contains(normalizedName))) {
+        continue;
+      }
+      if (_copyCompactExampleDirectory(
+        source: Directory(entry.path),
+        destination: Directory(_join(destination.path, name)),
+        isExampleRoot: false,
+      )) {
+        copiedFile = true;
+      }
+      continue;
+    }
+    if (type == FileSystemEntityType.file &&
+        (normalizedName == 'readme.md' || normalizedName.endsWith('.dart'))) {
+      destination.createSync(recursive: true);
+      File(entry.path).copySync(_join(destination.path, name));
+      copiedFile = true;
+    }
+  }
+  return copiedFile;
 }
 
 String _withoutNestedWorkspace(File sourceManifest) {

@@ -14,6 +14,21 @@ compatible `pulse_slab` versions, while the manual runtime API stays build-free.
 
 ## Unreleased
 
+## 0.3.0-beta.3 (`pulse_slab`)
+
+- Added the compact core developer example to the pub.dev archive.
+
+## 0.1.0-beta.2 (`pulse_slab_persistence_io`)
+
+- Added a compact capture, replay, and acknowledgement example to the pub.dev
+  archive.
+
+## 0.3.0-beta.2 (`pulse_slab_flutter`)
+
+- Added a compact Flutter developer template to the pub.dev archive.
+- Kept the high-rate Flutter telemetry application as a source-only
+  integration and profiling demo.
+
 ## 0.3.0-beta.2 (`pulse_slab`)
 
 - Documented bounded state-delivery semantics and added allocation-free

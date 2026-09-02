@@ -2,7 +2,7 @@ import 'dart:math' as math;
 
 import 'package:pulse_slab_flutter/pulse_slab_flutter.dart';
 
-/// Stable field descriptors used by the telemetry example.
+/// Stable field descriptors used by the telemetry demo.
 final class TelemetrySchema {
   /// Timestamp of the generated sample in seconds.
   static final Float64Field timestamp = Float64Field('timestamp');
@@ -64,7 +64,7 @@ enum TelemetryTransactionMode {
   final int transactionsPerBatch;
 }
 
-/// Selects how the telemetry example observes its bounded change journal.
+/// Selects how the telemetry demo observes its bounded change journal.
 enum TelemetryJournalMode {
   /// Samples journal utilization and clears retained state observations.
   sampled(
