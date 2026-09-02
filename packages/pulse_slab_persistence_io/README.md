@@ -8,6 +8,14 @@ state. It is not a domain-event broker, FIFO, or transactional outbox. The
 core package remains browser-safe; this optional package imports `dart:io` and
 supports Android, iOS, Linux, macOS, and Windows.
 
+## Installation
+
+```yaml
+dependencies:
+  pulse_slab: ^0.3.0-beta.2
+  pulse_slab_persistence_io: ^0.1.0-beta.1
+```
+
 ## Usage
 
 ```dart

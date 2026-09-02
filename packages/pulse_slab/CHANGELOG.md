@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.3.0-beta.2
+
 - Added opt-in versioned committed-record capture, checkpoints, and ordered
   replay contracts, while leaving the default store on its in-memory path.
 - Documented the bounded `immediate`, `latest`, and `batched` state-delivery
