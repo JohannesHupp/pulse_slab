@@ -14,6 +14,11 @@ compatible `pulse_slab` versions, while the manual runtime API stays build-free.
 
 ## Unreleased
 
+## 0.1.0-beta.3 (`pulse_slab_persistence_io`)
+
+- Ensured the published persistence package changelog starts with its released
+  version.
+
 ## 0.3.0-beta.3 (`pulse_slab`)
 
 - Added the compact core developer example to the pub.dev archive.
