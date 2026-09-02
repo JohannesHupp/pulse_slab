@@ -99,12 +99,12 @@ package do not create a tag or publish a package.
 
 The first release of a new package requires the one-time pub.dev bootstrap and
 GitHub environment configuration described in [Release
-automation](docs/releasing.md). The current package records already exist on
-pub.dev; each future package requires the same bootstrap before its first
-release. Before a release, maintainers confirm the trusted-publisher and GitHub
-environment settings. They then release by updating the relevant package
-version and changelog, then merging the release change to `main`. The telemetry
-application remains a source-only repository component and is never published.
+automation](docs/releasing.md). Each package requires the same bootstrap before
+its first release. Before a release, maintainers confirm the trusted-publisher
+and GitHub environment settings. They then release by updating the relevant
+package version and changelog, then merging the release change to `main`. The
+telemetry application remains a source-only repository component and is never
+published.
 
 Repository and issue tracker:
 

@@ -184,10 +184,9 @@ regular GitHub Releases.
 The publication and creation jobs are idempotent: an existing GitHub Release
 is reused, and every package publication job detects an already-published
 version after its dry-run and skips the immutable second upload. This also
-allows an earlier manual bootstrap publication to receive its normal tag and
-GitHub Release later. If only a release-creation job fails after pub.dev
-publication, rerun that failed job; it does not rerun the immutable package
-upload.
+allows a manually bootstrapped publication to receive its normal tag and GitHub
+Release later. If only a release-creation job fails after pub.dev publication,
+rerun that failed job; it does not rerun the immutable package upload.
 
 For tags created before this automation existed, use the **Backfill GitHub
 package releases** workflow from `main`. Provide one or more comma- or
@@ -202,21 +201,10 @@ GitHub Releases, and never calls pub.dev.
 
 ## Version policy
 
-Package versions on pub.dev are immutable. The initial manual publications
-created pub.dev package records for `pulse_slab`, `pulse_slab_generator`, and
-`pulse_slab_persistence_io`; trusted publishing then published the matching
-`pulse_slab_flutter` `0.3.0-beta.1` artifact. The native persistence package
-must have its GitHub trusted publisher configured before its first automated
-release. A generator-only correction is therefore prepared independently as
-`pulse_slab_generator 0.3.0-beta.2`, while its hosted dependency remains
-`pulse_slab ^0.3.0-beta.1`. Versions with a prerelease suffix, such as
-`0.3.0-beta.1`, create GitHub pre-releases. A version without one, such as
-`1.0.0`, creates a regular GitHub Release.
-
-The first stable public release is planned as `1.0.0`, without a `-beta`
-suffix. Once that version is released, it is immutable on pub.dev. Later
-prerelease work, if needed, must use a subsequent version rather than changing
-the `1.0.0` release.
+Package versions on pub.dev are immutable. Every release must use a new
+package version and matching changelog heading. Versions with a prerelease
+suffix, such as `0.3.0-beta.1`, create GitHub pre-releases. Versions without a
+prerelease suffix, such as `1.0.0`, create regular GitHub Releases.
 
 The native persistence package, Flutter adapter, and generator have normal
 hosted dependencies on `pulse_slab`. Before publishing any of their tags, the
@@ -231,11 +219,10 @@ An I/O-only release can therefore proceed independently while the core source is
 unchanged. If the core source has advanced, update the I/O package's lower bound
 to the matching core release before tagging it.
 
-The first `pulse_slab_persistence_io` release must be coordinated with a core
-release that exports the persistence contracts it imports. Its
-`pulse_slab` lower-bound constraint must name that core release before either
-package is tagged; workspace resolution alone is not a substitute for this
-hosted-package check.
+Every `pulse_slab_persistence_io` release must target a core release that
+exports the persistence contracts it imports. Its `pulse_slab` lower-bound
+constraint must name that core release before either package is tagged;
+workspace resolution alone is not a substitute for this hosted-package check.
 
 ## One-time maintainer setup
 
@@ -276,11 +263,10 @@ the release environment:
    short-lived credential used by pub.dev trusted publishing; no long-lived
    pub.dev token is stored in GitHub.
 
-All four package records now exist on pub.dev. Before merging a release to
-`main`, confirm that the GitHub `pub-dev` environment and each package's
-trusted publisher use the tag patterns above. The release workflow performs a
-dry-run before every upload, so invalid metadata or unexpected archive contents
-stop the release before publication.
+Before merging a release to `main`, confirm that the GitHub `pub-dev`
+environment and each package's trusted publisher use the tag patterns above.
+The release workflow performs a dry-run before every upload, so invalid metadata
+or unexpected archive contents stop the release before publication.
 
 ## Local release checks
 
