@@ -284,7 +284,7 @@ jobs:
           cache: true
       - name: Build isolated publication snapshot
         run: dart tools/prepare_publish_packages.dart
-      - name: Verify publication snapshot example policy
+      - name: Verify publication snapshot policy
         run: |
           test -f publish/packages/pulse_slab/example/pulse_slab_core_example.dart
           test -f publish/packages/pulse_slab/example/README.md
@@ -309,6 +309,39 @@ jobs:
               -name test.dart -o \
               -name '*_test.dart' \
             \) -print -quit | grep -q .
+          done
+          assert_no_empty_leading_unreleased() {
+            local changelog="$1"
+            awk '
+              /^##[[:space:]]/ && !seen_level_two {
+                seen_level_two = 1
+                empty_leading_unreleased = ($0 ~ /^##[[:space:]]+Unreleased[[:space:]]*$/)
+                next
+              }
+              {
+                if (empty_leading_unreleased) {
+                  if ($0 ~ /^[[:space:]]*$/) {
+                    next
+                  }
+                  if ($0 ~ /^#{1,2}[[:space:]]/) {
+                    exit 1
+                  }
+                  empty_leading_unreleased = 0
+                }
+              }
+              END {
+                if (empty_leading_unreleased) {
+                  exit 1
+                }
+              }
+            ' "$changelog"
+          }
+          for package in pulse_slab pulse_slab_persistence_io pulse_slab_generator pulse_slab_flutter; do
+            changelog="publish/packages/$package/CHANGELOG.md"
+            if ! assert_no_empty_leading_unreleased "$changelog"; then
+              echo "Staged $package changelog begins with an empty Unreleased section." >&2
+              exit 1
+            fi
           done
       - name: Copy publication snapshot outside the Git checkout
         env:

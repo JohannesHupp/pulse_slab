@@ -311,6 +311,12 @@ void _stagePackage({
         destination.writeAsStringSync(
           _withoutNestedWorkspace(File(entry.path)),
         );
+      } else if (normalizedName == 'changelog.md') {
+        destination.writeAsStringSync(
+          _withoutEmptyLeadingUnreleasedSection(
+            File(entry.path).readAsStringSync(),
+          ),
+        );
       } else {
         File(entry.path).copySync(destination.path);
       }
@@ -471,6 +477,52 @@ String _withoutNestedWorkspace(File sourceManifest) {
   }
 
   return '${outputLines.join('\n').trimRight()}\n';
+}
+
+/// Removes a whitespace-only first `Unreleased` section from a staged
+/// changelog.
+///
+/// Populated draft sections remain unchanged.
+String _withoutEmptyLeadingUnreleasedSection(String source) {
+  final RegExp linePattern = RegExp(r'([^\r\n]*)(\r\n|\r|\n|$)');
+  final List<Match> lines = linePattern
+      .allMatches(source)
+      .where((Match line) => line.start != line.end)
+      .toList(growable: false);
+  final RegExp levelTwoHeading = RegExp(r'^##[ \t]+');
+  final RegExp unreleasedHeading = RegExp(r'^##[ \t]+Unreleased[ \t]*$');
+  final RegExp sectionHeading = RegExp(r'^#{1,2}[ \t]+');
+
+  final int firstSectionIndex = lines.indexWhere(
+    (Match line) => levelTwoHeading.hasMatch(line.group(1)!),
+  );
+  if (firstSectionIndex < 0 ||
+      !unreleasedHeading.hasMatch(lines[firstSectionIndex].group(1)!)) {
+    return source;
+  }
+
+  var nextContentIndex = firstSectionIndex + 1;
+  while (nextContentIndex < lines.length &&
+      lines[nextContentIndex].group(1)!.trim().isEmpty) {
+    nextContentIndex += 1;
+  }
+
+  if (nextContentIndex == lines.length) {
+    return source.replaceRange(
+      lines[firstSectionIndex].start,
+      source.length,
+      '',
+    );
+  }
+  if (!sectionHeading.hasMatch(lines[nextContentIndex].group(1)!)) {
+    return source;
+  }
+
+  return source.replaceRange(
+    lines[firstSectionIndex].start,
+    lines[nextContentIndex].start,
+    '',
+  );
 }
 
 bool _isPartOfTopLevelYamlBlock(String line) {

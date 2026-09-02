@@ -13,7 +13,7 @@ supports Android, iOS, Linux, macOS, and Windows.
 ```yaml
 dependencies:
   pulse_slab: ^0.3.0-beta.3
-  pulse_slab_persistence_io: ^0.1.0-beta.2
+  pulse_slab_persistence_io: ^0.1.0-beta.3
 ```
 
 ## Usage

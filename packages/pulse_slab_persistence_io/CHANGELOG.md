@@ -1,6 +1,8 @@
 # Changelog
 
-## Unreleased
+## 0.1.0-beta.3
+
+- Ensured the published changelog starts with its released version.
 
 ## 0.1.0-beta.2
 

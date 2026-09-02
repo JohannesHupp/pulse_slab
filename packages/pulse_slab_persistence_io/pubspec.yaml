@@ -1,6 +1,6 @@
 name: pulse_slab_persistence_io
 description: Native bounded segmented file persistence and ordered replay for PulseStore captures.
-version: 0.1.0-beta.2
+version: 0.1.0-beta.3
 resolution: workspace
 repository: https://github.com/JohannesHupp/pulse_slab
 issue_tracker: https://github.com/JohannesHupp/pulse_slab/issues
