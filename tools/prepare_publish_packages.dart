@@ -423,13 +423,22 @@ bool _copyCompactExampleDirectory({
       continue;
     }
     if (type == FileSystemEntityType.file &&
-        (normalizedName == 'readme.md' || normalizedName.endsWith('.dart'))) {
+        _isCompactExampleFileName(normalizedName)) {
       destination.createSync(recursive: true);
       File(entry.path).copySync(_join(destination.path, name));
       copiedFile = true;
     }
   }
   return copiedFile;
+}
+
+bool _isCompactExampleFileName(String normalizedName) {
+  if (normalizedName == 'readme.md') {
+    return true;
+  }
+  return normalizedName.endsWith('.dart') &&
+      normalizedName != 'test.dart' &&
+      !normalizedName.endsWith('_test.dart');
 }
 
 String _withoutNestedWorkspace(File sourceManifest) {

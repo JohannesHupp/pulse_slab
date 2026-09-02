@@ -10,5 +10,7 @@ example/fixtures/
 example/integration_test/
 example/test/
 example/tool/
+example/**/test.dart
+example/**/*_test.dart
 test/
 tool/

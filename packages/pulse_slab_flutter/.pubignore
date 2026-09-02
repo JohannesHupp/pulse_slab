@@ -16,5 +16,7 @@ example/test/
 example/tool/
 example/web/
 example/windows/
+example/**/test.dart
+example/**/*_test.dart
 demo/
 test/

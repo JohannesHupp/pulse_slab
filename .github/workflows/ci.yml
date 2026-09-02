@@ -305,6 +305,10 @@ jobs:
               -name test -o \
               -name tool \
             \) -print -quit | grep -q .
+            ! find "publish/packages/$package/example" -type f \( \
+              -name test.dart -o \
+              -name '*_test.dart' \
+            \) -print -quit | grep -q .
           done
       - name: Copy publication snapshot outside the Git checkout
         env:
@@ -333,6 +337,10 @@ jobs:
               -name integration_test -o \
               -name test -o \
               -name tool \
+            \) -print -quit | grep -q .
+            ! find "$PUBLISH_WORKSPACE/packages/$package/example" -type f \( \
+              -name test.dart -o \
+              -name '*_test.dart' \
             \) -print -quit | grep -q .
           done
       - name: Resolve isolated publication dependencies
