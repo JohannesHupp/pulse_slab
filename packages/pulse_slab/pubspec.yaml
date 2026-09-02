@@ -1,6 +1,6 @@
 name: pulse_slab
 description: Compact transactional typed-memory state storage for high-throughput reactive Dart applications.
-version: 0.3.0-beta.1
+version: 0.3.0-beta.2
 resolution: workspace
 repository: https://github.com/JohannesHupp/pulse_slab
 issue_tracker: https://github.com/JohannesHupp/pulse_slab/issues

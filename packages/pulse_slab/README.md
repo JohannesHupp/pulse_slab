@@ -27,7 +27,7 @@ Use the release version selected on pub.dev:
 
 ```yaml
 dependencies:
-  pulse_slab: ^0.3.0-beta.1
+  pulse_slab: ^0.3.0-beta.2
 ```
 
 For local development in this repository, point a consuming package at `../packages/pulse_slab`.
@@ -156,7 +156,7 @@ later, while `pulse_slab_generator` requires Dart 3.9 or later.
 
 ```yaml
 dependencies:
-  pulse_slab: ^0.3.0-beta.1
+  pulse_slab: ^0.3.0-beta.2
 
 dev_dependencies:
   build_runner: ^2.14.1

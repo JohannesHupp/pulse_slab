@@ -21,7 +21,7 @@ environment:
   sdk: '>=3.6.0 <4.0.0'
 
 dependencies:
-  pulse_slab: ^0.3.0-beta.1
+  pulse_slab: ^0.3.0-beta.2
 
 dev_dependencies:
   coverage: ^1.15.1
