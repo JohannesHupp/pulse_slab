@@ -282,6 +282,8 @@ jobs:
         with:
           channel: stable
           cache: true
+      - name: Test publication changelog staging
+        run: dart tools/test_publish_changelog.dart
       - name: Build isolated publication snapshot
         run: dart tools/prepare_publish_packages.dart
       - name: Verify publication snapshot example policy

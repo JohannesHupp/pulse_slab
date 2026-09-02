@@ -1,5 +1,7 @@
 import 'dart:io';
 
+import 'src/publish_changelog.dart';
+
 /// Creates an isolated Pub workspace for the four publishable packages.
 ///
 /// The staged workspace retains only the compact developer examples intended
@@ -310,6 +312,12 @@ void _stagePackage({
       if (normalizedName == 'pubspec.yaml') {
         destination.writeAsStringSync(
           _withoutNestedWorkspace(File(entry.path)),
+        );
+      } else if (normalizedName == 'changelog.md') {
+        destination.writeAsStringSync(
+          withoutEmptyLeadingUnreleasedSection(
+            File(entry.path).readAsStringSync(),
+          ),
         );
       } else {
         File(entry.path).copySync(destination.path);
