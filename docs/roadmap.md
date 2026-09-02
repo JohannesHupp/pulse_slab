@@ -1,10 +1,12 @@
 # Roadmap
 
-Version 0.3.0-beta.1 builds on the pure Dart data plane, separately publishable Flutter
-adapter, deterministic bounded delivery behavior, and release-oriented
-verification established in the previous release line. Future work should
-remain driven by measured workloads and preserve the ownership and lifecycle
-guarantees documented in this repository.
+Version 0.3.0-beta.2 adds optional committed-record capture and replay to the
+pure Dart data plane, with a separately publishable native persistence backend.
+It retains the separately publishable Flutter adapter, deterministic bounded
+delivery behavior, and release-oriented verification established in the
+previous release line. Future work should remain driven by measured workloads
+and preserve the ownership and lifecycle guarantees documented in this
+repository.
 
 ## Optional generated layouts
 
@@ -33,7 +35,7 @@ Potential future work includes:
 - Double buffering for producer and consumer pipelines.
 - SIMD-specialized bulk operations where they are measurable and portable.
 - Carefully specified multi-writer support.
-- Additional delivery policies and per-subscriber backpressure instrumentation.
+- Additional delivery policies.
 - Optional Riverpod and Bloc adapters as external packages, not core dependencies.
 - Persistent journal adapters for acknowledged lossless domain events.
 - More detailed allocation, latency, and memory telemetry in benchmark tooling.

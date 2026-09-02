@@ -9,6 +9,7 @@ environment:
 
 workspace:
   - packages/pulse_slab
+  - packages/pulse_slab_persistence_io
   - packages/pulse_slab_generator
   - packages/pulse_slab_flutter
   - packages/pulse_slab_flutter/example

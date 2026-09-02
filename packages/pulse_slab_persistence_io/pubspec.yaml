@@ -1,17 +1,27 @@
-name: pulse_slab
-description: Compact transactional typed-memory state storage for high-throughput reactive Dart applications.
-version: 0.3.0-beta.2
+name: pulse_slab_persistence_io
+description: Native bounded segmented file persistence and ordered replay for PulseStore captures.
+version: 0.1.0-beta.1
 resolution: workspace
 repository: https://github.com/JohannesHupp/pulse_slab
 issue_tracker: https://github.com/JohannesHupp/pulse_slab/issues
 topics:
+  - persistence
   - reactive
   - typed-data
-  - performance
   - telemetry
+
+platforms:
+  android:
+  ios:
+  linux:
+  macos:
+  windows:
 
 environment:
   sdk: '>=3.6.0 <4.0.0'
+
+dependencies:
+  pulse_slab: ^0.3.0-beta.2
 
 dev_dependencies:
   coverage: ^1.15.1

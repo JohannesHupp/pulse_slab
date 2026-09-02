@@ -33,11 +33,34 @@ The focused byte-batch worker is long-lived. It owns its decoding or transformat
 
 The worker accepts transferable byte batches rather than arbitrary closures or shared pointers. This keeps ownership, serialization, and error handling explicit. The API is intentionally focused so it can remain honest about what crosses an isolate boundary.
 
+## Persistent file capture
+
+`FileStorePersistence` runs one long-lived native I/O isolate for one journal
+directory. The owning store isolate encodes an accepted capture batch into an
+independently owned buffer and transfers it with `TransferableTypedData`. The
+I/O isolate writes and replays those bytes; it never receives a record handle,
+reader, writer, typed-memory segment, or reference to live store memory.
+
+The file backend takes an exclusive journal lock while it is open. A second
+writer fails explicitly instead of interleaving frames. One backend instance is
+attached to one `PulseStore` lifetime, and replay offers one active delivery at
+a time. Acknowledgement is serialized after the delivered frame has been
+flushed, so an unacknowledged delivery is available after restart.
+
 ## Backpressure and event semantics
 
 The worker keeps a bounded number of messages in flight. When capacity is exhausted, submission fails with backpressure instead of appending to an unbounded queue. A replaceable-state producer may retain its own newest batch and retry later. A lossless producer must await capacity or use a separately acknowledged persistent transport.
 
 The core change journal has the same boundary: it is bounded state-observation infrastructure, not an event log. Journal overwrite and reject-newest policies are observable state-delivery trade-offs; neither is a substitute for reliable event delivery.
+
+The native persistence backend separately bounds unacknowledged encoded replay
+payloads with `maxPendingBytes` and retained physical segment bytes with
+`maxJournalBytes`. `maxSegmentBytes` bounds one append-only segment. It rejects
+a new capture with `StorePersistenceBackpressureException` when either bound
+would be exceeded. Acknowledging the oldest delivery releases logical replay
+capacity; physical bytes are released once a fully acknowledged closed segment
+can be reclaimed. These limits are independent of `ChangeJournal` capacity and
+subscription delivery queues.
 
 ## Startup, failure, and shutdown
 

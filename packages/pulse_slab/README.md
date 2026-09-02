@@ -27,7 +27,7 @@ Use the release version selected on pub.dev:
 
 ```yaml
 dependencies:
-  pulse_slab: ^0.3.0-beta.1
+  pulse_slab: ^0.3.0-beta.2
 ```
 
 For local development in this repository, point a consuming package at `../packages/pulse_slab`.
@@ -156,7 +156,7 @@ later, while `pulse_slab_generator` requires Dart 3.9 or later.
 
 ```yaml
 dependencies:
-  pulse_slab: ^0.3.0-beta.1
+  pulse_slab: ^0.3.0-beta.2
 
 dev_dependencies:
   build_runner: ^2.14.1
@@ -262,28 +262,37 @@ for new portable identifiers, counters, and unsigned values.
 
 | Policy | Behavior | Queue bound |
 | --- | --- | --- |
-| `immediate` | Calls matching listeners immediately after a successful commit. | No normal queue; reentrant listener calls use a fixed replaceable queue. |
+| `immediate` | Calls matching listeners immediately after a successful commit. | No normal queue; immediate calls reentered during active immediate dispatch use a fixed replaceable queue. |
 | `latest` | Keeps only the latest merged state change per subscription until `flush()`. | One pending change per subscription. |
-| `batched` | Retains bounded state changes until `flush()`. | Fixed journal and subscription bounds. |
+| `batched` | Retains matching state changes in arrival order until `flush()`. | Fixed store-wide delivery ring; a full ring replaces its oldest pending delivery. |
 
 Subscriptions are scoped to one handle and may filter by a compact field mask or
 a wide `FieldSelection`. Dispatch order is registration order. Removing a
 subscription during dispatch is safe; a removed listener will not be invoked
 later in the same dispatch. A listener may start a new transaction after the
-original commit. A reentrant immediate change commits synchronously but its
-immediate listener calls wait until the active traversal finishes. The fixed
-`maxReentrantImmediateDeliveries` queue replaces its oldest pending state
-delivery when full and increments `droppedReentrantImmediateDeliveryCount`; it
-never rejects a committed write. Reentrant `latest` and `batched`
-subscriptions are routed into their own bounded policy queues immediately, so
-their coalescing semantics are preserved. Latest and batched delivery retain
-changes until the next explicit flush. `flush()` rejects reentrant calls from a
-latest or batched delivery callback. Prefer deferring feedback loops when a
-flat callback sequence is easier to reason about.
+original commit. If immediate dispatch is already active, matching immediate
+calls wait in the fixed `maxReentrantImmediateDeliveries` queue until that
+traversal finishes. A full queue replaces its oldest pending state delivery and
+increments `droppedReentrantImmediateDeliveryCount`; it never rejects a
+committed write. An update from a latest or batched flush callback invokes its
+matching immediate listeners inline instead. During an active immediate
+traversal, reentrant `latest` and `batched` subscriptions enter their own
+bounded policy queues immediately, so their coalescing semantics are preserved.
+`flush()` rejects reentrant calls from a latest or batched delivery callback.
 
 If a queued reentrant immediate listener fails, the first failure is rethrown
 when the outermost delivery traversal completes. It never rolls back either
 already committed state change.
+
+Each `StoreSubscription` exposes allocation-free scalar metrics for its own
+delivery work: `pendingDeliveries`, `deliveredCount`, `coalescedCount`, and
+`droppedCount`. `pendingDeliveries` is a current gauge; the remaining values
+are cumulative. Latest replacement increments `coalescedCount`, while
+`droppedCount` only records an explicit eviction from a full batched or
+reentrant-immediate delivery ring. Journal overwrite and rejection metrics are
+separate from subscription delivery metrics. The complete ordering, capacity,
+flush, reentrancy, and metric contract is in the repository's
+[delivery policies](https://github.com/JohannesHupp/pulse_slab/blob/main/docs/delivery_policies.md).
 
 Transaction and `update` actions must be synchronous; a returned `Future` is
 rejected and the synchronous prefix is rolled back. Record listeners and
@@ -296,6 +305,62 @@ While a transaction callback is active, public `read`, `versionOf`, `watch`, and
 as well. Use the transaction writer's `get` method for an in-transaction read.
 This prevents synchronous consumers from observing partially written record
 bytes before the commit boundary.
+
+## Optional persistent capture and replay
+
+Persistence is disabled by default. A `PulseStore` constructed without a
+`persistence:` backend retains its synchronous in-memory path: transactions do
+not create capture batches or queues, copy record bytes, encode values, start a
+worker, or perform I/O. The only persistence-related work on a completed
+transaction is the predictable backend-null guard.
+
+The browser-safe core exports portable capture and replay contracts. Native
+append-only file storage is provided by the independently publishable
+[`pulse_slab_persistence_io`](https://github.com/JohannesHupp/pulse_slab/tree/main/packages/pulse_slab_persistence_io)
+source package; its first pub.dev release is pending:
+
+```dart
+import 'dart:io';
+
+import 'package:pulse_slab/pulse_slab.dart';
+import 'package:pulse_slab_persistence_io/pulse_slab_persistence_io.dart';
+
+final persistence = await FileStorePersistence.open(
+  directory: Directory('sensor-captures'),
+  maxPendingBytes: 8 * 1024 * 1024,
+  maxJournalBytes: 16 * 1024 * 1024,
+  maxSegmentBytes: 1024 * 1024,
+);
+final store = PulseStore(
+  persistence: persistence,
+  persistenceLayoutResolver: (layout) => StorePersistenceLayout(
+    identity: layout.name,
+    version: 1,
+  ),
+);
+
+final sensor = store.allocate(sensorLayout);
+store.capturePersistenceCheckpoint();
+await persistence.flush();
+```
+
+Enabled stores capture full committed record bytes at allocation, completed
+transaction, release, and explicit checkpoint boundaries. Capture admission is
+synchronous: a `StorePersistenceBackpressureException` rolls a transaction
+back and leaves an allocation or release unchanged. `append` admission is not
+atomic with a filesystem write; use the backend's `flush()` method for its
+durability boundary. Captures are independent of `ChangeJournal`, delivery
+policies, and Flutter frame coalescing.
+
+`maxPendingBytes` bounds unacknowledged replay payload bytes.
+`FileStorePersistence` also exposes `maxJournalBytes` for retained physical
+segment bytes and `maxSegmentBytes` for each append-only segment. A full limit
+rejects a new capture explicitly and never overwrites, coalesces, or silently
+drops an accepted capture. The replay consumer provides one in-flight delivery
+at a time. Persist a replayed projection before acknowledging it because an
+unacknowledged capture is replayed after restart. Attach a backend instance to
+only one `PulseStore` lifetime. See the complete [persistence and replay
+contract](../../docs/persistence.md).
 
 ## Flutter integration
 
@@ -393,4 +458,5 @@ The package includes pub.dev metadata, semantic versioning, license, changelog, 
 - [Memory model](https://github.com/JohannesHupp/pulse_slab/blob/main/docs/memory_model.md)
 - [Performance](https://github.com/JohannesHupp/pulse_slab/blob/main/docs/performance.md)
 - [Concurrency](https://github.com/JohannesHupp/pulse_slab/blob/main/docs/concurrency.md)
+- [Persistence and replay](https://github.com/JohannesHupp/pulse_slab/blob/main/docs/persistence.md)
 - [Roadmap](https://github.com/JohannesHupp/pulse_slab/blob/main/docs/roadmap.md)

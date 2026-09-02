@@ -7,6 +7,7 @@ export 'dart:typed_data';
 export 'src/errors.dart';
 export 'src/layout_annotations.dart';
 export 'src/layout.dart';
+export 'src/persistence/pulse_store_persistence.dart';
 export 'src/reactive/change_journal.dart';
 export 'src/reactive/delivery_policy.dart';
 export 'src/reactive/pulse_store.dart';

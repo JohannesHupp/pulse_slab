@@ -32,7 +32,7 @@ jobs:
               ),
             ];
             const tagPattern =
-              /^(pulse_slab(?:_(?:flutter|generator))?)-v(\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?)$/;
+              /^(pulse_slab_persistence_io|pulse_slab_generator|pulse_slab_flutter|pulse_slab)-v(\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?)$/;
 
             if (tagNames.length === 0) {
               throw new Error('Provide at least one package tag.');

@@ -24,6 +24,24 @@ store is disposed. This trades a predictable high-water allocation for steady
 state reuse; isolate unusually large bulk transactions in a short-lived store
 when retaining that capacity would be undesirable.
 
+## Optional persistent capture
+
+Persistence is disabled unless a `PulseStorePersistence` backend is supplied.
+In the disabled configuration, field writes do not perform persistence work and
+a completed transaction performs only the backend-null guard. It does not
+allocate capture batches, copy record bytes, encode values, create a queue,
+start a worker, or perform I/O.
+
+An enabled store copies each changed record's final bytes once at its completed
+transaction boundary and groups those snapshots in one capture batch. The
+backend then owns encoding, retention, and I/O. Record allocation and release
+also capture lifecycle operations. An explicit checkpoint copies every live
+record, so size `maxPendingBytes` to admit the largest checkpoint as well as
+normal incremental batches. For the native file backend, also size
+`maxJournalBytes` for retained framed segments and `maxSegmentBytes` for the
+largest encoded capture plus its binary headers. Measure enabled capture
+separately from the in-memory baseline on the deployment device.
+
 ## Compact and wide field selection
 
 For layouts with at most 31 fields, `FieldMask` remains the original integer
@@ -61,19 +79,26 @@ Use an explicit transaction when multiple field writes form one logical update. 
 
 | Delivery policy | Consumer behavior | Bound |
 | --- | --- | --- |
-| `immediate` | Matching listeners run after the commit. | No normal queue; reentrant listener calls use a fixed replaceable queue. |
+| `immediate` | Matching listeners run after the commit. | No normal queue; reentrant immediate calls during an active immediate traversal use a fixed replaceable queue. |
 | `latest` | Each subscription retains only its latest relevant change until a flush. | One pending change per subscription. |
-| `batched` | Bounded state changes accumulate until an explicit flush. | Journal and subscription bounds apply. |
+| `batched` | Matching state changes accumulate in arrival order until an explicit flush. | One fixed store-wide delivery ring; a full ring replaces its oldest pending delivery. |
 
 The Flutter adapter uses a frame scheduler by default. It can accept many core commits while a widget receives only the latest state for its selected fields once per rendered frame. Manual flushing remains available for deterministic widget tests.
+
+Each `StoreSubscription` exposes allocation-free scalar delivery metrics. Its
+current `pendingDeliveries` gauge and monotonic `deliveredCount`,
+`coalescedCount`, and `droppedCount` counters are maintained while that
+subscription is routed; reading them neither allocates a snapshot nor scans
+other listeners. See [delivery policies](delivery_policies.md) for the
+precise capacity, overflow, and reentrancy contract.
 
 ## Journals, overflow, and metrics
 
 Journal capacity is fixed. Overwrite behavior discards the oldest replaceable observation when full. Reject-newest behavior preserves the committed state but rejects journal admission and increments `PulseStore.rejectedJournalChangeCount`. Neither policy silently turns a lossless event into a best-effort state update.
 
-Treat journal utilization, overwrite counts, rejected admissions, raw input
-count, committed record count, and UI delivery count as distinct operational
-signals. The Flutter telemetry example is designed to make their relationship
+Treat journal utilization, overwrite counts, rejected admissions,
+per-subscription delivery metrics, raw input count, committed record count, and
+UI delivery count as distinct operational signals. The Flutter telemetry example is designed to make their relationship
 visible at high configured input rates. Its default journal mode samples and
 clears every 250 ms, so stable utilization represents a recent observation
 window rather than accumulated backlog. Its retained pressure modes use a small
@@ -90,7 +115,8 @@ dart run benchmark/pulse_slab_benchmark.dart
 ```
 
 The suite covers sequential typed writes, portable unsigned 64-bit field
-read/write, random record updates, transaction throughput, unfiltered dispatch,
+read/write, persistence capture admission without file I/O, random record
+updates, transaction throughput, unfiltered dispatch,
 compact field-filtered dispatch, a 63-field wide-selection dispatch,
 frame-style coalescing, slot reuse, an object-model baseline, and a small
 notifier-style baseline. The wide workload selects fields across all three

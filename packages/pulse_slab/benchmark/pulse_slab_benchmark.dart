@@ -30,6 +30,7 @@ void main() {
 
   final results = <BenchmarkResult>[
     _sequentialTypedWrites(schema, operations),
+    _persistenceCaptureAdmission(schema, operations),
     _portableUint64ReadWrites(operations),
     _randomRecordUpdates(schema, operations),
     _transactionThroughput(schema, operations),
@@ -89,6 +90,45 @@ BenchmarkResult _sequentialTypedWrites(
     );
   } finally {
     fixture.dispose();
+  }
+}
+
+BenchmarkResult _persistenceCaptureAdmission(
+  _BenchmarkSchema schema,
+  int operations,
+) {
+  final _DiscardingPersistence persistence = _DiscardingPersistence();
+  final PulseStore store = PulseStore(
+    segmentCapacity: 256,
+    journalCapacity: 2048,
+    persistence: persistence,
+  );
+  final RecordHandle handle = store.allocate(schema.layout);
+
+  try {
+    return measureBenchmark(
+      name: 'persistence capture admission',
+      operations: operations,
+      warmupOperations: _warmupCount(operations),
+      body: (count) {
+        persistence.reset();
+        var checksum = 0;
+        for (var index = 0; index < count; index++) {
+          store.update(handle, (writer) {
+            writer.set(schema.value, index.toDouble());
+            writer.set(schema.status, index & 0xffff);
+          });
+          checksum ^= store.versionOf(handle);
+        }
+        return BenchmarkWorkResult(
+          emittedNotifications: 0,
+          coalescedNotifications: 0,
+          checksum: checksum ^ persistence.capturedOperations,
+        );
+      },
+    );
+  } finally {
+    store.dispose();
   }
 }
 
@@ -386,7 +426,7 @@ BenchmarkResult _frameStyleCoalescing(
   var delivered = 0;
   var checksum = 0;
 
-  fixture.store.watch(
+  final StoreSubscription subscription = fixture.store.watch(
     fixture.primary,
     fields: schema.value.mask,
     policy: DeliveryPolicy.latest,
@@ -405,7 +445,7 @@ BenchmarkResult _frameStyleCoalescing(
       body: (count) {
         delivered = 0;
         checksum = 0;
-        final beforeCoalesced = fixture.store.latestCoalescedDeliveryCount;
+        final beforeCoalesced = subscription.coalescedCount;
         for (var index = 0; index < count; index++) {
           fixture.store.update(fixture.primary, (writer) {
             writer.set(schema.value, index.toDouble() + 0.125);
@@ -417,8 +457,7 @@ BenchmarkResult _frameStyleCoalescing(
         fixture.store.flush();
         return BenchmarkWorkResult(
           emittedNotifications: delivered,
-          coalescedNotifications:
-              fixture.store.latestCoalescedDeliveryCount - beforeCoalesced,
+          coalescedNotifications: subscription.coalescedCount - beforeCoalesced,
           checksum: checksum,
         );
       },
@@ -611,5 +650,19 @@ final class _WideFixture {
 
   void dispose() {
     store.dispose();
+  }
+}
+
+/// A synchronous sink that measures core capture admission without file I/O.
+final class _DiscardingPersistence implements PulseStorePersistence {
+  var capturedOperations = 0;
+
+  void reset() {
+    capturedOperations = 0;
+  }
+
+  @override
+  void append(StoreCaptureBatch batch) {
+    capturedOperations += batch.operations.length;
   }
 }
