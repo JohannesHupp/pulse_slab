@@ -3,6 +3,13 @@
 .pub/
 build/
 coverage/
+example/benchmark/
+example/fixtures/
+example/integration_test/
+example/test/
+example/tool/
+example/**/test.dart
+example/**/*_test.dart
 pubspec.lock
 test/
 pubspec_overrides.yaml

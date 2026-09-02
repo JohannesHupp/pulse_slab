@@ -12,8 +12,8 @@ supports Android, iOS, Linux, macOS, and Windows.
 
 ```yaml
 dependencies:
-  pulse_slab: ^0.3.0-beta.2
-  pulse_slab_persistence_io: ^0.1.0-beta.1
+  pulse_slab: ^0.3.0-beta.3
+  pulse_slab_persistence_io: ^0.1.0-beta.2
 ```
 
 ## Usage
@@ -48,6 +48,10 @@ if (delivery != null) {
 
 await persistence.close();
 ```
+
+The [minimal runnable example](example/file_store_persistence_example.dart)
+creates a temporary journal, captures a checkpoint and update, reopens it, and
+acknowledges its replayed batches.
 
 ## Semantics
 

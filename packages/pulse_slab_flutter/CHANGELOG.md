@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.3.0-beta.2
+
+- Added a compact Flutter developer template to the pub.dev archive.
+- Moved the high-rate telemetry integration application to the source-only
+  `demo/telemetry` directory.
+
 ## 0.3.0-beta.1
 
 - Added portable `selection:` filtering for `ReactiveRecordListenable`,

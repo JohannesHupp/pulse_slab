@@ -27,7 +27,7 @@ Use the release version selected on pub.dev:
 
 ```yaml
 dependencies:
-  pulse_slab: ^0.3.0-beta.2
+  pulse_slab: ^0.3.0-beta.3
 ```
 
 For local development in this repository, point a consuming package at `../packages/pulse_slab`.
@@ -87,6 +87,10 @@ subscription.dispose();
 store.release(sensor);
 store.dispose();
 ```
+
+The [minimal runnable example](example/pulse_slab_core_example.dart) contains
+the same core flow in one file and can be run with
+`dart run example/pulse_slab_core_example.dart`.
 
 Field descriptor names are metadata. Hot reads and writes use the stable descriptor and its resolved byte offset, not a string lookup.
 
@@ -156,7 +160,7 @@ later, while `pulse_slab_generator` requires Dart 3.9 or later.
 
 ```yaml
 dependencies:
-  pulse_slab: ^0.3.0-beta.2
+  pulse_slab: ^0.3.0-beta.3
 
 dev_dependencies:
   build_runner: ^2.14.1
@@ -316,8 +320,8 @@ transaction is the predictable backend-null guard.
 
 The browser-safe core exports portable capture and replay contracts. Native
 append-only file storage is provided by the independently publishable
-[`pulse_slab_persistence_io`](https://github.com/JohannesHupp/pulse_slab/tree/main/packages/pulse_slab_persistence_io)
-source package; its first pub.dev release is pending:
+[`pulse_slab_persistence_io`](https://pub.dev/packages/pulse_slab_persistence_io)
+package:
 
 ```dart
 import 'dart:io';
@@ -370,7 +374,7 @@ API:
 
 ~~~yaml
 dependencies:
-  pulse_slab_flutter: ^0.3.0-beta.1
+  pulse_slab_flutter: ^0.3.0-beta.2
 ~~~
 
 ~~~dart
@@ -379,10 +383,11 @@ import 'package:pulse_slab_flutter/pulse_slab_flutter.dart';
 
 `ReactiveRecordBuilder` in that package owns a field-filtered subscription and
 uses frame-coalesced notification by default. A temperature-only builder does
-not rebuild when only `status` changes. The [Flutter telemetry example](https://github.com/JohannesHupp/pulse_slab/tree/main/packages/pulse_slab_flutter/example)
-simulates multiple sensors at configurable high update rates and displays
-raw input updates, net committed record changes, transaction compaction, frame
-deliveries, rebuilds, coalescing, and bounded journal behavior.
+not rebuild when only `status` changes. The adapter's
+[minimal Flutter template](https://pub.dev/packages/pulse_slab_flutter/example)
+shows the basic integration, while its source-only
+[telemetry demo](https://github.com/JohannesHupp/pulse_slab/tree/main/packages/pulse_slab_flutter/demo/telemetry)
+exercises high input rates and bounded delivery behavior.
 
 ## Background byte batches
 
@@ -450,7 +455,12 @@ dart test -p chrome test/web_portability_test.dart
 
 ## Pub.dev readiness
 
-The package includes pub.dev metadata, semantic versioning, license, changelog, a Dart example, tests, benchmarks, and analysis configuration. It is ready for release verification; see the repository [release automation guide](../../docs/releasing.md) for the tagged publishing process. The Flutter adapter is separately publishable and the telemetry example is independently runnable from `packages/pulse_slab_flutter`.
+The package includes pub.dev metadata, semantic versioning, license, changelog,
+a compact Dart example, tests, benchmarks, and analysis configuration. It is
+ready for release verification; see the repository [release automation
+guide](../../docs/releasing.md) for the tagged publishing process. The Flutter
+adapter is separately publishable and its telemetry demo is independently
+runnable from `packages/pulse_slab_flutter/demo/telemetry`.
 
 ## Further reading
 

@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+## 0.3.0-beta.3
+
+- Added the compact core developer example to the pub.dev archive.
+
 ## 0.3.0-beta.2
 
 - Added opt-in versioned committed-record capture, checkpoints, and ordered

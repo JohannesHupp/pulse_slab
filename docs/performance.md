@@ -98,7 +98,7 @@ Journal capacity is fixed. Overwrite behavior discards the oldest replaceable ob
 
 Treat journal utilization, overwrite counts, rejected admissions,
 per-subscription delivery metrics, raw input count, committed record count, and
-UI delivery count as distinct operational signals. The Flutter telemetry example is designed to make their relationship
+UI delivery count as distinct operational signals. The Flutter telemetry demo is designed to make their relationship
 visible at high configured input rates. Its default journal mode samples and
 clears every 250 ms, so stable utilization represents a recent observation
 window rather than accumulated backlog. Its retained pressure modes use a small
@@ -127,11 +127,11 @@ the runtime exposes measured values.
 
 Benchmark output is machine-, SDK-, build-mode-, and workload-dependent. Treat it as a regression signal rather than a package-wide performance claim.
 
-## Profiling the Flutter example
+## Profiling the Flutter telemetry demo
 
 ```powershell
 dart pub get
-cd packages/pulse_slab_flutter/example
+cd packages/pulse_slab_flutter/demo/telemetry
 flutter run --profile
 ```
 
