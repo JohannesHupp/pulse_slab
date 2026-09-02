@@ -4,6 +4,7 @@ import 'dart:typed_data';
 
 import '../errors.dart';
 import '../layout.dart';
+import '../persistence/pulse_store_persistence.dart';
 import '../record_handle.dart';
 import '../segmented_memory.dart';
 import 'change_journal.dart';
@@ -283,6 +284,8 @@ final class StoreSubscription {
 ///
 /// Nested transactions are rejected. A transaction that throws restores byte
 /// snapshots made for its touched records and does not publish any changes.
+/// Its writers stop accepting reads and writes as soon as the action returns,
+/// before persistence capture admission begins.
 final class WriteTransaction {
   WriteTransaction._(this._state);
 
@@ -367,7 +370,16 @@ final class PulseStore {
         JournalOverflowPolicy.overwriteOldest,
     int maxBatchedDeliveries = 1024,
     int maxReentrantImmediateDeliveries = 1024,
-  })  : maxBatchedDeliveries = _positive(
+    this.persistence,
+    StorePersistenceLayoutResolver? persistenceLayoutResolver,
+  })  : _persistenceLayoutResolver = persistence == null
+            ? null
+            : persistenceLayoutResolver ?? defaultStorePersistenceLayout,
+        _persistenceLayouts = persistence == null
+            ? null
+            : <RecordHandle, StorePersistenceLayout>{},
+        _persistenceOwnerToken = persistence == null ? null : Object(),
+        maxBatchedDeliveries = _positive(
           maxBatchedDeliveries,
           'maxBatchedDeliveries',
         ),
@@ -390,10 +402,26 @@ final class PulseStore {
           ),
           null,
         ) {
+    if (persistence == null && persistenceLayoutResolver != null) {
+      throw ArgumentError.value(
+        persistenceLayoutResolver,
+        'persistenceLayoutResolver',
+        'Requires a persistence backend.',
+      );
+    }
     _memory = SegmentedMemory(
       segmentCapacity: segmentCapacity,
       readAccessGuard: _ensureRetainedReaderAccess,
     );
+    final PulseStorePersistence? configuredPersistence = persistence;
+    if (configuredPersistence != null) {
+      try {
+        _attachPersistence(configuredPersistence);
+      } on Object {
+        _memory.dispose();
+        rethrow;
+      }
+    }
   }
 
   static int _positive(int value, String name) {
@@ -421,7 +449,27 @@ final class PulseStore {
   /// Ring journal for compact, replaceable record-state changes.
   final ChangeJournal journal;
 
+  /// Optional ordered capture sink for committed record snapshots.
+  ///
+  /// When this is `null`, which is the default, completed transactions take the
+  /// existing in-memory path without allocating capture batches, copying record
+  /// bytes, encoding values, creating persistence queues, or performing I/O.
+  /// When non-null, a single guard at the completed-transaction boundary builds
+  /// immutable snapshot batches for this sink. The sink is independent from
+  /// [journal] and from Flutter or subscription delivery. A backend instance can
+  /// be attached to one store lifetime. Calls that re-enter this store while a
+  /// backend is synchronously accepting a batch are rejected.
+  final PulseStorePersistence? persistence;
+
+  final StorePersistenceLayoutResolver? _persistenceLayoutResolver;
+  final Map<RecordHandle, StorePersistenceLayout>? _persistenceLayouts;
+  final Object? _persistenceOwnerToken;
+
   late final SegmentedMemory _memory;
+  static final Expando<Object> _persistenceOwners = Expando<Object>(
+    'PulseStore.persistenceOwner',
+  );
+  static final Object _persistenceCaptureSentinel = Object();
   final Map<RecordHandle, _SubscriptionBucket> _subscriptionBuckets =
       <RecordHandle, _SubscriptionBucket>{};
   final List<StoreSubscription> _latestQueue = <StoreSubscription>[];
@@ -430,7 +478,10 @@ final class PulseStore {
   final _TransactionScratchArena _transactionScratch =
       _TransactionScratchArena();
 
-  _TransactionState? _activeTransaction;
+  // A real [_TransactionState] protects a transaction. The private sentinel
+  // temporarily applies the same access gate while a lifecycle capture is
+  // synchronously admitted, without adding a persistence branch to reads.
+  Object? _activeTransaction;
   var _batchedReadIndex = 0;
   var _batchedWriteIndex = 0;
   var _batchedLength = 0;
@@ -444,6 +495,7 @@ final class PulseStore {
   var _isFlushingLatest = false;
   var _isFlushingBatched = false;
   var _isPublishingCommittedChanges = false;
+  var _isCapturingPersistence = false;
   var _reentrantImmediateReadIndex = 0;
   var _reentrantImmediateWriteIndex = 0;
   var _reentrantImmediateLength = 0;
@@ -509,7 +561,30 @@ final class PulseStore {
   RecordHandle allocate(RecordLayout layout) {
     _ensureOpen();
     _ensureNoActiveLifecycleMutation('allocate');
-    return _memory.allocate(layout);
+    final PulseStorePersistence? persistence = this.persistence;
+    if (persistence == null) {
+      return _memory.allocate(layout);
+    }
+    final StorePersistenceLayout persistenceLayout =
+        _persistenceLayoutResolver!(layout);
+    final RecordHandle handle = _memory.allocate(layout);
+    final Map<RecordHandle, StorePersistenceLayout> layouts =
+        _persistenceLayouts!;
+    layouts[handle] = persistenceLayout;
+    try {
+      _appendLifecyclePersistence(
+        StoreCaptureBatch.incremental(
+          <StoreCaptureOperation>[
+            _captureSnapshot(handle, persistenceLayout, version: 0),
+          ],
+        ),
+      );
+    } on Object {
+      layouts.remove(handle);
+      _memory.release(handle);
+      rethrow;
+    }
+    return handle;
   }
 
   /// Returns a checked, immutable reader for [handle].
@@ -535,6 +610,22 @@ final class PulseStore {
   void release(RecordHandle handle) {
     _ensureOpen();
     _ensureNoActiveLifecycleMutation('release');
+    final PulseStorePersistence? persistence = this.persistence;
+    if (persistence != null) {
+      _memory.validateHandle(handle);
+      final StorePersistenceLayout? layout = _persistenceLayouts![handle];
+      if (layout == null) {
+        throw StateError('Missing persistence metadata for $handle.');
+      }
+      _appendLifecyclePersistence(
+        StoreCaptureBatch.incremental(
+          <StoreCaptureOperation>[
+            StoreCaptureRelease(record: _captureRecordId(handle)),
+          ],
+        ),
+      );
+      _persistenceLayouts.remove(handle);
+    }
     _memory.release(handle);
     final _SubscriptionBucket? bucket = _subscriptionBuckets.remove(handle);
     final _ListenerFailure? invalidationFailure = bucket?.invalidateAll();
@@ -562,6 +653,12 @@ final class PulseStore {
   /// commit: every eligible listener is attempted and the first failure is
   /// rethrown after traversal.
   ///
+  /// When [persistence] is configured, the store first asks its bounded sink to
+  /// accept an immutable post-write capture at this completed-transaction
+  /// boundary. A synchronous admission failure rolls the transaction back.
+  /// Successful admission does not make the state commit and an eventual file
+  /// write atomic; backend-specific flush and failure APIs define durability.
+  ///
   /// [action] must complete synchronously. Returning a [Future] is rejected
   /// and rolls back its synchronous prefix. Any deferred code runs outside the
   /// transaction boundary and must not use its transaction writer.
@@ -577,6 +674,11 @@ final class PulseStore {
     late R result;
     try {
       result = action(WriteTransaction._(state));
+      // No caller code may use retained transaction facades after the action
+      // returns. Closing the existing transaction state here keeps that
+      // guarantee during synchronous persistence admission without a separate
+      // per-field persistence predicate.
+      state.deactivate();
       if (result is Future<Object?>) {
         // The call throws synchronously, so this rejected future has no normal
         // caller. Ignore a later writer-lifetime failure instead of surfacing
@@ -600,6 +702,35 @@ final class PulseStore {
     final _ListenerFailure? listenerFailure = state.publish();
     listenerFailure?.throwWithOriginalStack();
     return result;
+  }
+
+  /// Captures a complete persistence checkpoint of every live record.
+  ///
+  /// This is available only when [persistence] is configured. A checkpoint
+  /// contains full committed record images and can be followed by ordered
+  /// incremental captures during recovery. Calling it does not flush a backend;
+  /// use backend-specific durability APIs for that boundary.
+  void capturePersistenceCheckpoint() {
+    _ensureOpen();
+    _ensureNoActiveLifecycleMutation('capture a persistence checkpoint');
+    final PulseStorePersistence? persistence = this.persistence;
+    if (persistence == null) {
+      throw StateError(
+        'PulseStore.capturePersistenceCheckpoint requires persistence.',
+      );
+    }
+    final List<StoreCaptureSnapshot> snapshots = <StoreCaptureSnapshot>[];
+    for (final MapEntry<RecordHandle, StorePersistenceLayout> entry
+        in _persistenceLayouts!.entries) {
+      snapshots.add(
+        _captureSnapshot(
+          entry.key,
+          entry.value,
+          version: _memory.versionOf(entry.key),
+        ),
+      );
+    }
+    _appendLifecyclePersistence(StoreCaptureBatch.checkpoint(snapshots));
   }
 
   /// Convenience wrapper for one synchronous controlled record update.
@@ -701,6 +832,7 @@ final class PulseStore {
   /// from a change listener is safe: current and pending deliveries become
   /// inactive and no later record changes are published.
   void dispose() {
+    _ensureNoPersistenceReentrancy('dispose the store');
     if (_isDisposed) {
       return;
     }
@@ -726,6 +858,7 @@ final class PulseStore {
       _clearReentrantImmediateDeliveries();
     }
     _transactionScratch.dispose();
+    _persistenceLayouts?.clear();
     _memory.dispose();
     invalidationFailure?.throwWithOriginalStack();
   }
@@ -805,6 +938,7 @@ final class PulseStore {
   }
 
   void _removeSubscription(StoreSubscription subscription) {
+    _ensureNoPersistenceReentrancy('dispose a subscription');
     if (!subscription._isActive) {
       return;
     }
@@ -825,6 +959,92 @@ final class PulseStore {
       _subscriptionBuckets.remove(subscription.handle);
     }
   }
+
+  void _capturePreparedWrites(List<_PendingWrite> changed) {
+    final PulseStorePersistence? persistence = this.persistence;
+    if (persistence == null || changed.isEmpty) {
+      return;
+    }
+    final Map<RecordHandle, StorePersistenceLayout> layouts =
+        _persistenceLayouts!;
+    final List<StoreCaptureOperation> operations = <StoreCaptureOperation>[];
+    for (final _PendingWrite pending in changed) {
+      final StorePersistenceLayout? layout = layouts[pending.handle];
+      if (layout == null) {
+        throw StateError('Missing persistence metadata for ${pending.handle}.');
+      }
+      operations.add(
+        _captureSnapshot(
+          pending.handle,
+          layout,
+          version: _memory.versionOf(pending.handle) + 1,
+        ),
+      );
+    }
+    _appendPersistence(StoreCaptureBatch.incremental(operations));
+  }
+
+  void _appendPersistence(StoreCaptureBatch batch) {
+    final PulseStorePersistence? persistence = this.persistence;
+    if (persistence == null) {
+      return;
+    }
+    _ensureNoPersistenceReentrancy('capture persistence');
+    _isCapturingPersistence = true;
+    try {
+      persistence.append(batch);
+    } finally {
+      _isCapturingPersistence = false;
+    }
+  }
+
+  void _appendLifecyclePersistence(StoreCaptureBatch batch) {
+    assert(_activeTransaction == null);
+    _activeTransaction = _persistenceCaptureSentinel;
+    try {
+      _appendPersistence(batch);
+    } finally {
+      _activeTransaction = null;
+    }
+  }
+
+  void _attachPersistence(PulseStorePersistence persistence) {
+    if (_persistenceOwners[persistence] != null) {
+      throw StateError(
+        'A PulseStorePersistence instance can be attached to only one '
+        'PulseStore for its lifetime.',
+      );
+    }
+    _persistenceOwners[persistence] = _persistenceOwnerToken!;
+  }
+
+  void _ensureNoPersistenceReentrancy(String operation) {
+    if (_isCapturingPersistence) {
+      throw StateError(
+        'Cannot $operation while a persistence backend is accepting a '
+        'capture from this PulseStore.',
+      );
+    }
+  }
+
+  StoreCaptureSnapshot _captureSnapshot(
+    RecordHandle handle,
+    StorePersistenceLayout layout, {
+    required int version,
+  }) =>
+      StoreCaptureSnapshot.takeBytes(
+        record: _captureRecordId(handle),
+        layout: layout,
+        version: version,
+        bytes: _memory.copyRecordBytes(handle),
+      );
+
+  StoreCaptureRecordId _captureRecordId(RecordHandle handle) =>
+      StoreCaptureRecordId(
+        segment: handle.segment,
+        slot: handle.slot,
+        generation: handle.generation,
+      );
 
   _ListenerFailure? _publishChanges(List<RecordChange> changes) {
     if (changes.isEmpty || _isDisposed) {
@@ -1152,7 +1372,6 @@ final class _TransactionState {
   }
 
   void prepareCommit() {
-    _ensureActive();
     if (_prepared) {
       throw StateError('The transaction commit was already prepared.');
     }
@@ -1180,6 +1399,8 @@ final class _TransactionState {
       }
       changed.add(pending);
     }
+
+    _store._capturePreparedWrites(changed);
 
     for (final _PendingWrite pending in changed) {
       final int version = _store._memory.incrementVersion(pending.handle);

@@ -306,6 +306,62 @@ as well. Use the transaction writer's `get` method for an in-transaction read.
 This prevents synchronous consumers from observing partially written record
 bytes before the commit boundary.
 
+## Optional persistent capture and replay
+
+Persistence is disabled by default. A `PulseStore` constructed without a
+`persistence:` backend retains its synchronous in-memory path: transactions do
+not create capture batches or queues, copy record bytes, encode values, start a
+worker, or perform I/O. The only persistence-related work on a completed
+transaction is the predictable backend-null guard.
+
+The browser-safe core exports portable capture and replay contracts. Native
+append-only file storage is provided by the independently publishable
+[`pulse_slab_persistence_io`](https://github.com/JohannesHupp/pulse_slab/tree/main/packages/pulse_slab_persistence_io)
+source package; its first pub.dev release is pending:
+
+```dart
+import 'dart:io';
+
+import 'package:pulse_slab/pulse_slab.dart';
+import 'package:pulse_slab_persistence_io/pulse_slab_persistence_io.dart';
+
+final persistence = await FileStorePersistence.open(
+  directory: Directory('sensor-captures'),
+  maxPendingBytes: 8 * 1024 * 1024,
+  maxJournalBytes: 16 * 1024 * 1024,
+  maxSegmentBytes: 1024 * 1024,
+);
+final store = PulseStore(
+  persistence: persistence,
+  persistenceLayoutResolver: (layout) => StorePersistenceLayout(
+    identity: layout.name,
+    version: 1,
+  ),
+);
+
+final sensor = store.allocate(sensorLayout);
+store.capturePersistenceCheckpoint();
+await persistence.flush();
+```
+
+Enabled stores capture full committed record bytes at allocation, completed
+transaction, release, and explicit checkpoint boundaries. Capture admission is
+synchronous: a `StorePersistenceBackpressureException` rolls a transaction
+back and leaves an allocation or release unchanged. `append` admission is not
+atomic with a filesystem write; use the backend's `flush()` method for its
+durability boundary. Captures are independent of `ChangeJournal`, delivery
+policies, and Flutter frame coalescing.
+
+`maxPendingBytes` bounds unacknowledged replay payload bytes.
+`FileStorePersistence` also exposes `maxJournalBytes` for retained physical
+segment bytes and `maxSegmentBytes` for each append-only segment. A full limit
+rejects a new capture explicitly and never overwrites, coalesces, or silently
+drops an accepted capture. The replay consumer provides one in-flight delivery
+at a time. Persist a replayed projection before acknowledging it because an
+unacknowledged capture is replayed after restart. Attach a backend instance to
+only one `PulseStore` lifetime. See the complete [persistence and replay
+contract](../../docs/persistence.md).
+
 ## Flutter integration
 
 This package intentionally has no Flutter SDK dependency. Flutter applications
@@ -402,4 +458,5 @@ The package includes pub.dev metadata, semantic versioning, license, changelog, 
 - [Memory model](https://github.com/JohannesHupp/pulse_slab/blob/main/docs/memory_model.md)
 - [Performance](https://github.com/JohannesHupp/pulse_slab/blob/main/docs/performance.md)
 - [Concurrency](https://github.com/JohannesHupp/pulse_slab/blob/main/docs/concurrency.md)
+- [Persistence and replay](https://github.com/JohannesHupp/pulse_slab/blob/main/docs/persistence.md)
 - [Roadmap](https://github.com/JohannesHupp/pulse_slab/blob/main/docs/roadmap.md)

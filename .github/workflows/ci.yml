@@ -43,6 +43,61 @@ jobs:
       - name: Run Chrome portability integration test
         run: dart test -p chrome test/web_portability_test.dart
 
+  persistence_io_tests:
+    name: Native persistence I/O tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    defaults:
+      run:
+        working-directory: packages/pulse_slab_persistence_io
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+      - name: Set up Flutter SDK for workspace resolution
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+      - name: Resolve workspace dependencies
+        run: dart pub get
+      - name: Verify formatting
+        run: dart format --output=none --set-exit-if-changed lib test
+      - name: Analyze persistence I/O package
+        run: dart analyze
+      - name: Run VM unit and integration tests
+        run: dart test
+
+  persistence_io_platform_tests:
+    name: Native persistence I/O platform tests (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - macos-latest
+          - windows-latest
+    defaults:
+      run:
+        working-directory: packages/pulse_slab_persistence_io
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+      - name: Set up Flutter SDK for workspace resolution
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+      - name: Resolve workspace dependencies
+        run: dart pub get
+      - name: Verify formatting
+        run: dart format --output=none --set-exit-if-changed lib test
+      - name: Analyze persistence I/O package
+        run: dart analyze
+      - name: Run VM unit and integration tests
+        run: dart test
+
   generator_tests:
     name: Generator source and integration tests
     runs-on: ubuntu-latest
@@ -129,6 +184,8 @@ jobs:
     name: Coverage report
     needs:
       - core_tests
+      - persistence_io_tests
+      - persistence_io_platform_tests
       - flutter_adapter_tests
       - flutter_example_tests
     runs-on: ubuntu-latest
@@ -151,6 +208,14 @@ jobs:
         run: >-
           dart run coverage:format_coverage --lcov --in=coverage
           --out=coverage/lcov.info --package=. --report-on=lib
+      - name: Collect persistence I/O coverage
+        working-directory: packages/pulse_slab_persistence_io
+        run: dart test --coverage=coverage
+      - name: Convert persistence I/O coverage to LCOV
+        working-directory: packages/pulse_slab_persistence_io
+        run: >-
+          dart run coverage:format_coverage --lcov --in=coverage
+          --out=coverage/lcov.info --package=. --report-on=lib
       - name: Collect Flutter adapter coverage
         working-directory: packages/pulse_slab_flutter
         run: flutter test --no-pub --coverage
@@ -158,6 +223,7 @@ jobs:
         run: |
           dart run tools/coverage_summary.dart \
             --input pulse_slab=packages/pulse_slab/coverage/lcov.info \
+            --input pulse_slab_persistence_io=packages/pulse_slab_persistence_io/coverage/lcov.info \
             --input pulse_slab_flutter=packages/pulse_slab_flutter/coverage/lcov.info \
             --output coverage/summary.md
           cat coverage/summary.md >> "$GITHUB_STEP_SUMMARY"
@@ -168,6 +234,7 @@ jobs:
           if-no-files-found: error
           path: |
             packages/pulse_slab/coverage/lcov.info
+            packages/pulse_slab_persistence_io/coverage/lcov.info
             packages/pulse_slab_flutter/coverage/lcov.info
             coverage/summary.md
 
@@ -191,6 +258,8 @@ jobs:
       - name: Verify publication snapshot example policy
         run: |
           test ! -d publish/packages/pulse_slab/example
+          test -d publish/packages/pulse_slab_persistence_io
+          test ! -d publish/packages/pulse_slab_persistence_io/example
           test ! -d publish/packages/pulse_slab_flutter/example
           test -d publish/packages/pulse_slab_generator/example
           test -f publish/packages/pulse_slab_generator/build.yaml
@@ -204,6 +273,8 @@ jobs:
           cp -a publish/. "$PUBLISH_WORKSPACE/"
           test -f "$PUBLISH_WORKSPACE/pubspec.yaml"
           test ! -d "$PUBLISH_WORKSPACE/packages/pulse_slab/example"
+          test -d "$PUBLISH_WORKSPACE/packages/pulse_slab_persistence_io"
+          test ! -d "$PUBLISH_WORKSPACE/packages/pulse_slab_persistence_io/example"
           test ! -d "$PUBLISH_WORKSPACE/packages/pulse_slab_flutter/example"
           test -d "$PUBLISH_WORKSPACE/packages/pulse_slab_generator/example"
           test -f "$PUBLISH_WORKSPACE/packages/pulse_slab_generator/build.yaml"
@@ -213,6 +284,9 @@ jobs:
       - name: Validate core publication archive
         working-directory: ${{ runner.temp }}/pulse-slab-publish/packages/pulse_slab
         run: flutter pub publish --dry-run
+      - name: Validate persistence I/O publication archive
+        working-directory: ${{ runner.temp }}/pulse-slab-publish/packages/pulse_slab_persistence_io
+        run: dart pub publish --dry-run
       - name: Validate Flutter publication archive
         working-directory: ${{ runner.temp }}/pulse-slab-publish/packages/pulse_slab_flutter
         run: flutter pub publish --dry-run
@@ -251,23 +325,34 @@ jobs:
         run: |
           set -euo pipefail
 
-          if [[ "$PREVIOUS_SHA" != "0000000000000000000000000000000000000000" ]] && \
-            git diff --quiet "$PREVIOUS_SHA" "$GITHUB_SHA" -- \
-              packages/pulse_slab packages/pulse_slab_generator packages/pulse_slab_flutter; then
+          if [[ "$PREVIOUS_SHA" == "0000000000000000000000000000000000000000" ]]; then
+            echo "::notice::The initial repository push has no previous revision to compare; skipping package release tag creation."
+            exit 0
+          fi
+
+          if git diff --quiet "$PREVIOUS_SHA" "$GITHUB_SHA" -- \
+            packages/pulse_slab packages/pulse_slab_persistence_io packages/pulse_slab_generator packages/pulse_slab_flutter; then
             echo "::notice::No publishable package files changed; skipping package release tag creation."
             exit 0
           fi
 
-          if [[ -z "${RELEASE_TAG_TOKEN:-}" ]]; then
-            echo "::error::RELEASE_TAG_TOKEN is required to create tag-triggered pub.dev releases."
-            exit 1
-          fi
-
           declare -a tags_to_create=()
-          for package in pulse_slab pulse_slab_generator pulse_slab_flutter; do
+          for package in pulse_slab pulse_slab_persistence_io pulse_slab_generator pulse_slab_flutter; do
             pubspec="packages/${package}/pubspec.yaml"
             changelog="packages/${package}/CHANGELOG.md"
             version="$(awk -F ': *' '/^version:/ { print $2; exit }' "$pubspec")"
+
+            if ! git cat-file -e "${PREVIOUS_SHA}:${pubspec}" 2> /dev/null; then
+              echo "::notice::${package} is new in this revision; a later package-version change is required before it receives a release tag."
+              continue
+            fi
+
+            previous_version="$(git show "${PREVIOUS_SHA}:${pubspec}" | awk -F ': *' '/^version:/ { print $2; exit }')"
+            if [[ "$version" == "$previous_version" ]]; then
+              echo "::notice::${package} version is unchanged (${version}); skipping release tag creation."
+              continue
+            fi
+
             if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?$ ]]; then
               echo "::error file=${pubspec}::Expected a semantic package version, found '$version'."
               exit 1
@@ -290,7 +375,12 @@ jobs:
           done
 
           if [[ ${#tags_to_create[@]} -eq 0 ]]; then
-            echo "::error::A main release requires at least one new package version."
+            echo "::notice::No existing publishable package version changed; skipping package release tag creation."
+            exit 0
+          fi
+
+          if [[ -z "${RELEASE_TAG_TOKEN:-}" ]]; then
+            echo "::error::RELEASE_TAG_TOKEN is required to create tag-triggered pub.dev releases."
             exit 1
           fi
 

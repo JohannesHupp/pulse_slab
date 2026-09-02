@@ -4,6 +4,7 @@ Repository-level changes are summarized here. Each publishable package
 maintains its own changelog:
 
 - [`pulse_slab`](packages/pulse_slab/CHANGELOG.md)
+- [`pulse_slab_persistence_io`](packages/pulse_slab_persistence_io/CHANGELOG.md)
 - [`pulse_slab_generator`](packages/pulse_slab_generator/CHANGELOG.md)
 - [`pulse_slab_flutter`](packages/pulse_slab_flutter/CHANGELOG.md)
 
@@ -15,6 +16,10 @@ compatible `pulse_slab` versions, while the manual runtime API stays build-free.
 
 - Documented bounded state-delivery semantics and added allocation-free
   per-subscription delivery diagnostics for the core package.
+- Added opt-in committed-record persistence and replay contracts in the core,
+  plus the optional native `pulse_slab_persistence_io` backend.
+- Added workspace, verification, coverage, publication snapshot, and tagged
+  release automation for the native persistence package.
 
 ## 0.3.0-beta.2 (`pulse_slab_generator`)
 
