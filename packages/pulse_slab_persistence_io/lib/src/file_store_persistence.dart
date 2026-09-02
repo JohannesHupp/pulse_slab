@@ -46,6 +46,21 @@ final class FileStorePersistenceException implements Exception {
   }
 }
 
+/// Marks a worker-detected integrity failure as terminal.
+///
+/// Request validation errors are returned to the caller and leave the journal
+/// usable. A corrupt, truncated, or internally inconsistent journal must stop
+/// the worker instead: continuing to append would make its bounded replay
+/// state unreliable.
+final class _JournalIntegrityException implements Exception {
+  const _JournalIntegrityException(this.message);
+
+  final String message;
+
+  @override
+  String toString() => 'FileStorePersistenceException: $message';
+}
+
 /// Native append-only persistence for optional [PulseStore] captures.
 ///
 /// [append] synchronously admits an independently encoded capture into a
@@ -74,12 +89,8 @@ final class FileStorePersistence implements PulseStorePersistence {
     required String journalKey,
   })  : _journalKey = journalKey,
         _replyPort = ReceivePort(),
-        _errorPort = ReceivePort(),
-        _exitPort = ReceivePort(),
         _replayConsumer = _FileStoreReplayConsumer._() {
     _replySubscription = _replyPort.listen(_onReply);
-    _errorSubscription = _errorPort.listen(_onIsolateError);
-    _exitSubscription = _exitPort.listen(_onIsolateExit);
     _replayConsumer._owner = this;
   }
 
@@ -201,8 +212,6 @@ final class FileStorePersistence implements PulseStorePersistence {
   static final Set<String> _activeJournalKeys = <String>{};
 
   final ReceivePort _replyPort;
-  final ReceivePort _errorPort;
-  final ReceivePort _exitPort;
   final Completer<_WorkerReady> _ready = Completer<_WorkerReady>();
   final Completer<void> _stopped = Completer<void>();
   final Map<int, Completer<Map<Object?, Object?>>> _requests =
@@ -210,8 +219,6 @@ final class FileStorePersistence implements PulseStorePersistence {
   final _FileStoreReplayConsumer _replayConsumer;
 
   late final StreamSubscription<dynamic> _replySubscription;
-  late final StreamSubscription<dynamic> _errorSubscription;
-  late final StreamSubscription<dynamic> _exitSubscription;
   SendPort? _commandPort;
   Future<void>? _closeFuture;
   FileStorePersistenceException? _failure;
@@ -340,9 +347,14 @@ final class FileStorePersistence implements PulseStorePersistence {
       return _closeFuture!;
     }
 
-    _closeFuture = _request('shutdown', allowClosing: true)
-        .then<void>((_) => _stopped.future)
-        .whenComplete(() async {
+    _closeFuture =
+        _request('shutdown', allowClosing: true).then<void>((_) async {
+      await _stopped.future;
+      final FileStorePersistenceException? completedFailure = _failure;
+      if (completedFailure != null) {
+        throw completedFailure;
+      }
+    }).whenComplete(() async {
       _activeJournalKeys.remove(_journalKey);
       await _disposePorts();
     });
@@ -362,8 +374,11 @@ final class FileStorePersistence implements PulseStorePersistence {
           maxJournalBytes: maxJournalBytes,
           maxSegmentBytes: maxSegmentBytes,
         ),
-        onError: _errorPort.sendPort,
-        onExit: _exitPort.sendPort,
+        // Worker replies, errors, and exit notifications share one receive
+        // port. That preserves the worker's terminal message before its exit
+        // notification can be observed by the owning isolate.
+        onError: _replyPort.sendPort,
+        onExit: _replyPort.sendPort,
         errorsAreFatal: true,
         debugName: 'pulse_slab.file_store_persistence',
       );
@@ -489,6 +504,14 @@ final class FileStorePersistence implements PulseStorePersistence {
   }
 
   void _onReply(dynamic message) {
+    if (message == null) {
+      _onIsolateExit(null);
+      return;
+    }
+    if (message is List<Object?>) {
+      _onIsolateError(message);
+      return;
+    }
     if (message is! Map<Object?, Object?>) {
       _fail(
         const FileStorePersistenceException(
@@ -673,13 +696,7 @@ final class FileStorePersistence implements PulseStorePersistence {
     }
     _portsDisposed = true;
     _replyPort.close();
-    _errorPort.close();
-    _exitPort.close();
-    await Future.wait<void>(<Future<void>>[
-      _replySubscription.cancel(),
-      _errorSubscription.cancel(),
-      _exitSubscription.cancel(),
-    ]);
+    await _replySubscription.cancel();
   }
 }
 
@@ -770,28 +787,44 @@ void _fileStorePersistenceWorkerMain(_WorkerBootstrap bootstrap) async {
   ReceivePort? commandPort;
   var stopping = false;
   try {
-    worker = await _FileJournalWorker.open(bootstrap);
-    commandPort = ReceivePort();
+    final _FileJournalWorker openedWorker =
+        await _FileJournalWorker.open(bootstrap);
+    worker = openedWorker;
+    final ReceivePort openedCommandPort = ReceivePort();
+    commandPort = openedCommandPort;
     bootstrap.replyTo.send(<String, Object?>{
       'type': 'ready',
-      'commandPort': commandPort.sendPort,
-      'pendingBytes': worker.pendingBytes,
-      'journalBytes': worker.journalBytes,
-      'activeSegmentBytes': worker.activeSegmentBytes,
-      'nextSequence': worker.nextSequence,
+      'commandPort': openedCommandPort.sendPort,
+      'pendingBytes': openedWorker.pendingBytes,
+      'journalBytes': openedWorker.journalBytes,
+      'activeSegmentBytes': openedWorker.activeSegmentBytes,
+      'nextSequence': openedWorker.nextSequence,
     });
 
     Future<void> commandChain = Future<void>.value();
-    commandPort.listen((dynamic message) {
+    openedCommandPort.listen((dynamic message) {
       if (stopping) {
         return;
       }
       commandChain = commandChain.then<void>((_) async {
-        final bool shouldStop = await worker!.handle(message);
-        if (shouldStop) {
+        final int? shutdownRequestId = await openedWorker.handle(message);
+        if (shutdownRequestId != null) {
           stopping = true;
-          commandPort!.close();
-          await worker.close();
+          openedCommandPort.close();
+          try {
+            await openedWorker.close();
+          } on Object catch (error, stackTrace) {
+            bootstrap.replyTo.send(<String, Object?>{
+              'type': 'fatal',
+              'error': error.toString(),
+              'stackTrace': stackTrace.toString(),
+            });
+            return;
+          }
+          bootstrap.replyTo.send(<String, Object?>{
+            'type': 'success',
+            'requestId': shutdownRequestId,
+          });
           bootstrap.replyTo.send(const <String, Object?>{'type': 'stopped'});
         }
       }).catchError((Object error, StackTrace stackTrace) async {
@@ -799,9 +832,9 @@ void _fileStorePersistenceWorkerMain(_WorkerBootstrap bootstrap) async {
           return;
         }
         stopping = true;
-        commandPort!.close();
+        openedCommandPort.close();
         try {
-          await worker!.close();
+          await openedWorker.close();
         } on Object {
           // The original worker failure is the useful failure to surface.
         }
@@ -870,6 +903,7 @@ final class _FileJournalWorker {
         journalFileName: bootstrap.journalFileName,
         acknowledgementFileName: bootstrap.acknowledgementFileName,
         maxPendingBytes: bootstrap.maxPendingBytes,
+        maxJournalBytes: bootstrap.maxJournalBytes,
         maxSegmentBytes: bootstrap.maxSegmentBytes,
       );
       worker = _FileJournalWorker._(
@@ -930,7 +964,7 @@ final class _FileJournalWorker {
 
   int get activeSegmentBytes => _activeSegment?.byteLength ?? 0;
 
-  Future<bool> handle(dynamic message) async {
+  Future<int?> handle(dynamic message) async {
     if (message is! Map<Object?, Object?>) {
       throw const FileStorePersistenceException('Invalid worker command.');
     }
@@ -938,22 +972,28 @@ final class _FileJournalWorker {
     switch (type) {
       case 'append':
         await _append(message);
-        return false;
+        return null;
       case 'flush':
         await _respond(message, _flush);
-        return false;
+        return null;
       case 'take':
         await _respond(message, _take);
-        return false;
+        return null;
       case 'acknowledge':
         await _respond(message, () => _acknowledge(message));
-        return false;
+        return null;
       case 'retry':
         await _respond(message, () => _retry(message));
-        return false;
+        return null;
       case 'shutdown':
-        await _respond(message, _flush);
-        return true;
+        final Object? requestIdValue = message['requestId'];
+        if (requestIdValue is! int) {
+          throw const FileStorePersistenceException(
+            'A worker request is missing its request ID.',
+          );
+        }
+        await _flush();
+        return requestIdValue;
       default:
         throw FileStorePersistenceException('Unknown worker command $type.');
     }
@@ -1056,7 +1096,7 @@ final class _FileJournalWorker {
     final Uint8List bytes = await _readFrame(frame);
     if (bytes.lengthInBytes != frame.payloadLength ||
         _checksum(bytes) != frame.checksum) {
-      throw const FileStorePersistenceException(
+      throw const _JournalIntegrityException(
         'The journal changed or is truncated while reading a replay delivery.',
       );
     }
@@ -1081,7 +1121,7 @@ final class _FileJournalWorker {
     }
     if (pendingFrames.isEmpty ||
         pendingFrames.first.sequence != sequenceValue) {
-      throw const FileStorePersistenceException(
+      throw const _JournalIntegrityException(
         'The outstanding replay delivery is missing from the journal.',
       );
     }
@@ -1218,7 +1258,7 @@ final class _FileJournalWorker {
 
   Future<void> _persistAcknowledgement(int sequence) async {
     if (nextAcknowledgementGeneration > _maximumPortableSequence) {
-      throw const FileStorePersistenceException(
+      throw const _JournalIntegrityException(
         'The journal has exhausted acknowledgement checkpoint generations.',
       );
     }
@@ -1341,6 +1381,7 @@ Future<_RecoveredJournal> _recoverJournal({
   required String journalFileName,
   required String acknowledgementFileName,
   required int maxPendingBytes,
+  required int maxJournalBytes,
   required int maxSegmentBytes,
 }) async {
   final _AcknowledgementState acknowledgement = await _recoverAcknowledgement(
@@ -1348,23 +1389,27 @@ Future<_RecoveredJournal> _recoverJournal({
     journalFileName,
     acknowledgementFileName,
   );
-  final List<_JournalSegment> segments = await _listJournalSegments(
+  final List<_JournalSegment> discoveredSegments = await _listJournalSegments(
     directory,
     journalFileName,
   );
+  final List<_JournalSegment> segments = <_JournalSegment>[];
   final List<_JournalFrame> frames = <_JournalFrame>[];
+  final int safeReclamationSequence = acknowledgement.safeReclamationSequence;
   int? previousEndSequence;
   var journalBytes = 0;
 
-  for (final _JournalSegment segment in segments) {
-    final List<_JournalFrame> segmentFrames = await _scanJournalSegment(
-      segment,
-    );
-    if (segment.byteLength > maxSegmentBytes) {
+  for (final _JournalSegment segment in discoveredSegments) {
+    final int segmentLength = await File(segment.path).length();
+    if (segmentLength > maxSegmentBytes) {
       throw FileStorePersistenceException(
         'Journal segment ${_baseName(segment.path)} exceeds maxSegmentBytes.',
       );
     }
+    final List<_JournalFrame> segmentFrames = await _scanJournalSegment(
+      segment,
+      maxSegmentBytes: maxSegmentBytes,
+    );
     final int? previous = previousEndSequence;
     if (previous == null) {
       if (segment.startSequence > acknowledgement.sequence + 1) {
@@ -1381,11 +1426,27 @@ Future<_RecoveredJournal> _recoverJournal({
       );
     }
     previousEndSequence = segment.endSequence;
+    if (segment.endSequence! <= safeReclamationSequence) {
+      try {
+        await File(segment.path).delete();
+        continue;
+      } on FileSystemException {
+        // The acknowledgement is durable. Retain the segment and charge its
+        // bytes until a later acknowledgement or recovery can delete it.
+      }
+    }
     journalBytes += segment.byteLength;
+    if (journalBytes > maxJournalBytes) {
+      throw const FileStorePersistenceException(
+        'Recovered journal segments exceed maxJournalBytes.',
+      );
+    }
+    segments.add(segment);
     frames.addAll(segmentFrames);
   }
 
-  if (frames.isNotEmpty && acknowledgement.sequence > frames.last.sequence) {
+  if (acknowledgement.sequence > 0 &&
+      (frames.isEmpty || acknowledgement.sequence > frames.last.sequence)) {
     throw const FileStorePersistenceException(
       'Acknowledgement progress is beyond the retained journal.',
     );
@@ -1478,8 +1539,9 @@ Future<List<_JournalSegment>> _listJournalSegments(
 }
 
 Future<List<_JournalFrame>> _scanJournalSegment(
-  _JournalSegment segment,
-) async {
+  _JournalSegment segment, {
+  required int maxSegmentBytes,
+}) async {
   final RandomAccessFile input = await File(segment.path).open(
     mode: FileMode.read,
   );
@@ -1488,6 +1550,11 @@ Future<List<_JournalFrame>> _scanJournalSegment(
     if (length < _segmentHeaderLength) {
       throw const FileStorePersistenceException(
         'A journal segment ends in a truncated header.',
+      );
+    }
+    if (length > maxSegmentBytes) {
+      throw FileStorePersistenceException(
+        'Journal segment ${_baseName(segment.path)} exceeds maxSegmentBytes.',
       );
     }
     await input.setPosition(0);
@@ -1595,7 +1662,7 @@ Future<_AcknowledgementState> _recoverAcknowledgement(
     foundCheckpointFile = true;
     try {
       final _AcknowledgementCheckpoint checkpoint = _decodeAcknowledgement(
-        await file.readAsBytes(),
+        await _readAcknowledgementCheckpoint(file),
         expectedSlot: slot,
       );
       checkpoints.add(checkpoint);
@@ -1641,6 +1708,20 @@ Future<_AcknowledgementState> _recoverAcknowledgement(
     nextSlot: (latest.slot + 1) % _acknowledgementCheckpointCount,
     sequences: sequences,
   );
+}
+
+Future<Uint8List> _readAcknowledgementCheckpoint(File file) async {
+  final RandomAccessFile input = await file.open(mode: FileMode.read);
+  try {
+    if (await input.length() != _acknowledgementCheckpointLength) {
+      throw const FileStorePersistenceException(
+        'Invalid acknowledgement checkpoint length.',
+      );
+    }
+    return await input.read(_acknowledgementCheckpointLength);
+  } finally {
+    await input.close();
+  }
 }
 
 Future<void> _rejectLegacyJournalFiles(
@@ -1803,6 +1884,19 @@ final class _AcknowledgementState {
   final int nextGeneration;
   final int nextSlot;
   final List<int?> sequences;
+
+  int get safeReclamationSequence {
+    int? lowest;
+    for (final int? sequence in sequences) {
+      if (sequence == null) {
+        return 0;
+      }
+      if (lowest == null || sequence < lowest) {
+        lowest = sequence;
+      }
+    }
+    return lowest ?? 0;
+  }
 }
 
 _AcknowledgementCheckpoint _decodeAcknowledgement(

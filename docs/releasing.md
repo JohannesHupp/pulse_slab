@@ -46,7 +46,8 @@ flowchart LR
 manual dispatches. It runs in this order:
 
 1. Core VM unit and integration tests, including the browser portability test.
-2. Native persistence VM unit and integration tests.
+2. Native persistence VM unit and integration tests on Ubuntu, macOS, and
+   Windows.
 3. Generator formatting, analysis, generated-source freshness, unit and
    generated-source tests, and its complete runnable example.
 4. Flutter adapter unit and widget tests.
@@ -222,6 +223,12 @@ workflow waits for the exact lower-bound core version in its caret dependency
 constraint, including a semantic prerelease suffix when present, to appear on
 pub.dev. This makes same-merge releases reliable without pretending that pub.dev
 publication is instantly visible.
+
+Before publishing `pulse_slab_persistence_io`, the workflow also verifies that
+the checked-out core source matches the release tag named by that lower bound.
+An I/O-only release can therefore proceed independently while the core source is
+unchanged. If the core source has advanced, update the I/O package's lower bound
+to the matching core release before tagging it.
 
 The first `pulse_slab_persistence_io` release must be coordinated with a core
 release that exports the persistence contracts it imports. Its

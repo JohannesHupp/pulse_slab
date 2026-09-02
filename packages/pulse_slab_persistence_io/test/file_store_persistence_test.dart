@@ -276,6 +276,52 @@ void main() {
       }
     });
 
+    test('reclaims safe retained segments before enforcing recovery capacity',
+        () async {
+      final Directory directory = await _temporaryDirectory();
+      addTearDown(() => directory.delete(recursive: true));
+      final StoreCaptureBatch batch = _snapshotBatch(1, <int>[2, 4]);
+      final int payloadBytes = batch.encode().lengthInBytes;
+      final int segmentBytes = 48 + payloadBytes;
+      final FileStorePersistence persistence = await FileStorePersistence.open(
+        directory: directory,
+        maxPendingBytes: payloadBytes * 3,
+        maxJournalBytes: segmentBytes * 3,
+        maxSegmentBytes: segmentBytes,
+      );
+      persistence.append(batch);
+      persistence.append(batch);
+      persistence.append(batch);
+      await persistence.flush();
+
+      final File firstSegment = (await _journalSegmentFiles(directory)).first;
+      final List<int> retainedBytes = await firstSegment.readAsBytes();
+      final StorePersistenceReplayDelivery first =
+          (await persistence.replayConsumer.take())!;
+      await persistence.replayConsumer.acknowledge(first);
+      final StorePersistenceReplayDelivery second =
+          (await persistence.replayConsumer.take())!;
+      await persistence.replayConsumer.acknowledge(second);
+
+      // Simulate a failed physical deletion after a durable acknowledgement.
+      // The recovered backend must reclaim this safe segment before rejecting
+      // the remaining physical journal against the smaller capacity.
+      await firstSegment.writeAsBytes(retainedBytes, flush: true);
+      await persistence.close();
+
+      final FileStorePersistence reopened = await FileStorePersistence.open(
+        directory: directory,
+        maxPendingBytes: payloadBytes * 3,
+        maxJournalBytes: segmentBytes * 2,
+        maxSegmentBytes: segmentBytes,
+      );
+      addTearDown(reopened.close);
+
+      expect(reopened.journalBytes, segmentBytes * 2);
+      expect(await _journalSegmentFiles(directory), hasLength(2));
+      expect((await reopened.replayConsumer.take())!.sequence, 3);
+    });
+
     test('validates journal corruption instead of discarding bytes', () async {
       final Directory directory = await _temporaryDirectory();
       addTearDown(() => directory.delete(recursive: true));
@@ -290,6 +336,126 @@ void main() {
       final List<int> bytes = await segment.readAsBytes();
       bytes[bytes.length - 1] ^= 0xff;
       await segment.writeAsBytes(bytes, flush: true);
+
+      await expectLater(
+        FileStorePersistence.open(directory: directory),
+        throwsA(isA<FileStorePersistenceException>()),
+      );
+    });
+
+    test('fails open when acknowledgement progress outlives every segment',
+        () async {
+      final Directory directory = await _temporaryDirectory();
+      addTearDown(() => directory.delete(recursive: true));
+      final FileStorePersistence persistence = await FileStorePersistence.open(
+        directory: directory,
+      );
+      persistence.append(_snapshotBatch(1, <int>[9, 8, 7]));
+      final StorePersistenceReplayDelivery delivery =
+          (await persistence.replayConsumer.take())!;
+      await persistence.replayConsumer.acknowledge(delivery);
+      await persistence.close();
+
+      for (final File segment in await _journalSegmentFiles(directory)) {
+        await segment.delete();
+      }
+
+      await expectLater(
+        FileStorePersistence.open(directory: directory),
+        throwsA(isA<FileStorePersistenceException>()),
+      );
+    });
+
+    test('fails terminally when replay detects runtime journal corruption',
+        () async {
+      final Directory directory = await _temporaryDirectory();
+      addTearDown(() => directory.delete(recursive: true));
+      final FileStorePersistence persistence = await FileStorePersistence.open(
+        directory: directory,
+      );
+      var closeAttempted = false;
+      addTearDown(() async {
+        if (closeAttempted) {
+          return;
+        }
+        try {
+          await persistence.close();
+        } on Object {
+          // The test intentionally makes the backend terminal.
+        }
+      });
+      persistence.append(_snapshotBatch(1, <int>[9, 8, 7]));
+      await persistence.flush();
+
+      final File segment = (await _journalSegmentFiles(directory)).single;
+      final List<int> bytes = await segment.readAsBytes();
+      bytes[bytes.length - 1] ^= 0xff;
+      await segment.writeAsBytes(bytes, flush: true);
+
+      await expectLater(
+        persistence.replayConsumer.take(),
+        throwsA(isA<FileStorePersistenceException>()),
+      );
+      expect(
+        () => persistence.append(_snapshotBatch(2, <int>[1])),
+        throwsA(isA<FileStorePersistenceException>()),
+      );
+      await expectLater(
+        persistence.close(),
+        throwsA(isA<FileStorePersistenceException>()),
+      );
+      closeAttempted = true;
+    });
+
+    test('rejects oversized journal segments before scanning captures',
+        () async {
+      final Directory directory = await _temporaryDirectory();
+      addTearDown(() => directory.delete(recursive: true));
+      final StoreCaptureBatch batch = _snapshotBatch(1, <int>[9, 8, 7]);
+      final int maxSegmentBytes = 48 + batch.encode().lengthInBytes;
+      final FileStorePersistence persistence = await FileStorePersistence.open(
+        directory: directory,
+        maxJournalBytes: maxSegmentBytes * 2,
+        maxSegmentBytes: maxSegmentBytes,
+      );
+      persistence.append(batch);
+      await persistence.close();
+
+      final File segment = (await _journalSegmentFiles(directory)).single;
+      await segment.writeAsBytes(
+        List<int>.filled(maxSegmentBytes + 1, 0),
+        flush: true,
+      );
+
+      await expectLater(
+        FileStorePersistence.open(
+          directory: directory,
+          maxJournalBytes: maxSegmentBytes * 2,
+          maxSegmentBytes: maxSegmentBytes,
+        ),
+        throwsA(isA<FileStorePersistenceException>()),
+      );
+    });
+
+    test('rejects oversized acknowledgement checkpoints before reading them',
+        () async {
+      final Directory directory = await _temporaryDirectory();
+      addTearDown(() => directory.delete(recursive: true));
+      final FileStorePersistence persistence = await FileStorePersistence.open(
+        directory: directory,
+      );
+      persistence.append(_snapshotBatch(1, <int>[9, 8, 7]));
+      final StorePersistenceReplayDelivery delivery =
+          (await persistence.replayConsumer.take())!;
+      await persistence.replayConsumer.acknowledge(delivery);
+      await persistence.close();
+
+      final File acknowledgement =
+          (await _acknowledgementFiles(directory)).single;
+      await acknowledgement.writeAsBytes(
+        List<int>.filled(4096, 0),
+        flush: true,
+      );
 
       await expectLater(
         FileStorePersistence.open(directory: directory),

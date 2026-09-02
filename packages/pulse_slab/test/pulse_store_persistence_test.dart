@@ -405,6 +405,108 @@ void main() {
       });
       expect(store.read(handle).get(value), 7);
     });
+
+    test('closes retained transaction APIs before persistence admission', () {
+      final Uint8Field value = Uint8Field('value');
+      final RecordLayout layout = RecordLayout(
+        name: 'PersistenceWriterReentrancy',
+        fields: <Field<Object?>>[value],
+      );
+      late WriteTransaction retainedTransaction;
+      late TransactionRecordWriter retainedWriter;
+      final _ReentrantPersistence persistence = _ReentrantPersistence();
+      final PulseStore store = PulseStore(persistence: persistence);
+      addTearDown(store.dispose);
+      final RecordHandle handle = store.allocate(layout);
+      final RecordHandle other = store.allocate(layout);
+      persistence.onAppend = () {
+        expect(() => retainedWriter.set(value, 9), throwsStateError);
+        expect(
+          () => retainedTransaction.write(other).set(value, 9),
+          throwsStateError,
+        );
+      };
+
+      store.transaction<void>((WriteTransaction transaction) {
+        retainedTransaction = transaction;
+        final TransactionRecordWriter writer = transaction.write(handle);
+        retainedWriter = writer;
+        writer.set(value, 7);
+      });
+
+      expect(store.read(handle).get(value), 7);
+      expect(store.versionOf(handle), 1);
+      expect(store.read(other).get(value), 0);
+      expect(store.versionOf(other), 0);
+      final StoreCaptureSnapshot captured = _onlySnapshot(
+        persistence.batches.last,
+      );
+      expect(captured.copyBytes(), orderedEquals(<int>[7]));
+    });
+
+    test('rolls back when a persistence sink rejects reentrant writer use', () {
+      final Uint8Field value = Uint8Field('value');
+      final RecordLayout layout = RecordLayout(
+        name: 'PersistenceWriterRollback',
+        fields: <Field<Object?>>[value],
+      );
+      late TransactionRecordWriter retainedWriter;
+      final _ReentrantPersistence persistence = _ReentrantPersistence();
+      final PulseStore store = PulseStore(persistence: persistence);
+      addTearDown(store.dispose);
+      final RecordHandle handle = store.allocate(layout);
+      persistence.onAppend = () => retainedWriter.set(value, 9);
+
+      expect(
+        () => store.update(handle, (TransactionRecordWriter writer) {
+          retainedWriter = writer;
+          writer.set(value, 7);
+        }),
+        throwsStateError,
+      );
+
+      expect(store.read(handle).get(value), 0);
+      expect(store.versionOf(handle), 0);
+      expect(store.journal.isEmpty, isTrue);
+      expect(persistence.batches, hasLength(1));
+    });
+
+    test('rejects subscription disposal reentrancy from a persistence sink',
+        () {
+      final Uint8Field value = Uint8Field('value');
+      final RecordLayout layout = RecordLayout(
+        name: 'PersistenceSubscriptionReentrancy',
+        fields: <Field<Object?>>[value],
+      );
+      late StoreSubscription subscription;
+      final _ReentrantPersistence persistence = _ReentrantPersistence();
+      final PulseStore store = PulseStore(persistence: persistence);
+      addTearDown(store.dispose);
+      final RecordHandle handle = store.allocate(layout);
+      var delivered = 0;
+      subscription = store.watch(
+        handle,
+        listener: (RecordChange change) => delivered++,
+      );
+      persistence.onAppend = subscription.dispose;
+
+      expect(
+        () => store.update(handle, (TransactionRecordWriter writer) {
+          writer.set(value, 7);
+        }),
+        throwsStateError,
+      );
+
+      expect(store.read(handle).get(value), 0);
+      expect(subscription.isActive, isTrue);
+      expect(delivered, 0);
+
+      persistence.onAppend = null;
+      store.update(handle, (TransactionRecordWriter writer) {
+        writer.set(value, 7);
+      });
+      expect(delivered, 1);
+    });
   });
 }
 

@@ -13,7 +13,7 @@ The package family contains four independently publishable packages:
 | Component | Purpose | Distribution |
 | --- | --- | --- |
 | [`pulse_slab`](packages/pulse_slab) | Pure Dart data plane: layouts, typed memory, handles, transactions, journals, subscriptions, byte-batch workers, and persistence contracts. | pub.dev |
-| [`pulse_slab_persistence_io`](packages/pulse_slab_persistence_io) | Optional native file-persistence backend for committed store captures and replay. | pub.dev |
+| [`pulse_slab_persistence_io`](packages/pulse_slab_persistence_io) | Optional native file-persistence backend for committed store captures and replay. | Workspace package; first pub.dev release pending |
 | [`pulse_slab_generator`](packages/pulse_slab_generator) | Optional `build_runner` companion for typed layouts, serialization, and validation source. | pub.dev development dependency |
 | [`pulse_slab_flutter`](packages/pulse_slab_flutter) | Flutter UI adapter: frame-coalesced listenables and field-filtered widgets. It re-exports the core API. | pub.dev |
 
@@ -27,8 +27,9 @@ dependency. Its [README](packages/pulse_slab_generator/README.md) shows the
 hosted installation and local development workflow.
 
 Applications that need file-backed capture and replay opt into
-`pulse_slab_persistence_io`. The package is available on native Dart and
-Flutter platforms; the browser-safe core API has no `dart:io` dependency.
+`pulse_slab_persistence_io`. Its source package supports native Dart and
+Flutter platforms; the browser-safe core API has no `dart:io` dependency. The
+first pub.dev release is pending.
 
 The repository is a Dart Pub workspace. It resolves the local core, native
 persistence backend, generator, and Flutter adapter together during

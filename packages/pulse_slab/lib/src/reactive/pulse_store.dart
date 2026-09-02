@@ -284,6 +284,8 @@ final class StoreSubscription {
 ///
 /// Nested transactions are rejected. A transaction that throws restores byte
 /// snapshots made for its touched records and does not publish any changes.
+/// Its writers stop accepting reads and writes as soon as the action returns,
+/// before persistence capture admission begins.
 final class WriteTransaction {
   WriteTransaction._(this._state);
 
@@ -313,13 +315,13 @@ final class TransactionRecordWriter {
 
   /// The current record version. It advances when the transaction commits.
   int get version {
-    _state._ensureActive();
+    _state._ensureWritable();
     return _state._store._memory.versionOf(handle);
   }
 
   /// Reads the in-transaction value of [field].
   T get<T>(Field<T> field) {
-    _state._ensureActive();
+    _state._ensureWritable();
     return _pending.writer.get(field);
   }
 
@@ -336,7 +338,7 @@ final class TransactionRecordWriter {
   /// whose final encoded bytes differ from their bytes before the transaction
   /// began.
   FieldMask get changedMask {
-    _state._ensureActive();
+    _state._ensureWritable();
     return _pending.writer.changedMask;
   }
 
@@ -345,7 +347,7 @@ final class TransactionRecordWriter {
   /// This works for layouts of any width. The committed change is still more
   /// precise because it removes fields restored before commit.
   FieldSelection get changedFieldSelection {
-    _state._ensureActive();
+    _state._ensureWritable();
     return _pending.writer.changedFieldSelection;
   }
 }
@@ -668,6 +670,7 @@ final class PulseStore {
     late R result;
     try {
       result = action(WriteTransaction._(state));
+      state.freezeUserAccess();
       if (result is Future<Object?>) {
         // The call throws synchronously, so this rejected future has no normal
         // caller. Ignore a later writer-lifetime failure instead of surfacing
@@ -929,6 +932,7 @@ final class PulseStore {
   }
 
   void _removeSubscription(StoreSubscription subscription) {
+    _ensureNoPersistenceReentrancy('dispose a subscription');
     if (!subscription._isActive) {
       return;
     }
@@ -1326,10 +1330,11 @@ final class _TransactionState {
       LinkedHashMap<RecordHandle, _PendingWrite>();
   final List<RecordChange> _committedChanges = <RecordChange>[];
   var _isActive = true;
+  var _acceptsUserAccess = true;
   var _prepared = false;
 
   TransactionRecordWriter writerFor(RecordHandle handle) {
-    _ensureActive();
+    _ensureWritable();
     _store._memory.validateHandle(handle);
     final _PendingWrite pending = _pending.putIfAbsent(
       handle,
@@ -1339,7 +1344,7 @@ final class _TransactionState {
   }
 
   bool _set<T>(_PendingWrite pending, Field<T> field, T value) {
-    _ensureActive();
+    _ensureWritable();
     if (!pending.writer.wouldChange(field, value)) {
       return false;
     }
@@ -1423,6 +1428,11 @@ final class _TransactionState {
     _prepared = true;
   }
 
+  void freezeUserAccess() {
+    _ensureActive();
+    _acceptsUserAccess = false;
+  }
+
   FieldMask _netChangedMask(_PendingWrite pending) {
     final FieldMask changedMask = pending.writer.changedMask;
     if (changedMask == 0) {
@@ -1476,6 +1486,7 @@ final class _TransactionState {
 
   void deactivate() {
     _isActive = false;
+    _acceptsUserAccess = false;
   }
 
   _ListenerFailure? publish() {
@@ -1488,6 +1499,16 @@ final class _TransactionState {
   void _ensureActive() {
     if (!_isActive) {
       throw StateError('This transaction is no longer active.');
+    }
+  }
+
+  void _ensureWritable() {
+    _ensureActive();
+    if (!_acceptsUserAccess) {
+      throw StateError(
+        'This transaction action has already returned; its writers are no '
+        'longer usable.',
+      );
     }
   }
 }

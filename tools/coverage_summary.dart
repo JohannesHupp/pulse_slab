@@ -8,6 +8,7 @@
 /// ```sh
 /// dart run tools/coverage_summary.dart \
 ///   --input pulse_slab=packages/pulse_slab/coverage/lcov.info \
+///   --input pulse_slab_persistence_io=packages/pulse_slab_persistence_io/coverage/lcov.info \
 ///   --input pulse_slab_flutter=packages/pulse_slab_flutter/coverage/lcov.info \
 ///   --output coverage/summary.md
 /// ```
@@ -31,6 +32,7 @@ Options:
 Example:
   dart run tools/coverage_summary.dart \\
     --input pulse_slab=packages/pulse_slab/coverage/lcov.info \\
+    --input pulse_slab_persistence_io=packages/pulse_slab_persistence_io/coverage/lcov.info \\
     --input pulse_slab_flutter=packages/pulse_slab_flutter/coverage/lcov.info \\
     --output coverage/summary.md
 ''';

@@ -47,6 +47,37 @@ jobs:
     name: Native persistence I/O tests
     runs-on: ubuntu-latest
     timeout-minutes: 20
+
+    defaults:
+      run:
+        working-directory: packages/pulse_slab_persistence_io
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+      - name: Set up Flutter SDK for workspace resolution
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+      - name: Resolve workspace dependencies
+        run: dart pub get
+      - name: Verify formatting
+        run: dart format --output=none --set-exit-if-changed lib test
+      - name: Analyze persistence I/O package
+        run: dart analyze
+      - name: Run VM unit and integration tests
+        run: dart test
+
+  persistence_io_platform_tests:
+    name: Native persistence I/O platform tests (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - macos-latest
+          - windows-latest
     defaults:
       run:
         working-directory: packages/pulse_slab_persistence_io
@@ -154,6 +185,7 @@ jobs:
     needs:
       - core_tests
       - persistence_io_tests
+      - persistence_io_platform_tests
       - flutter_adapter_tests
       - flutter_example_tests
     runs-on: ubuntu-latest
