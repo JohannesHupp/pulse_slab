@@ -202,15 +202,15 @@ GitHub Releases, and never calls pub.dev.
 ## Version policy
 
 Package versions on pub.dev are immutable. The initial manual publications
-created pub.dev package records for `pulse_slab` and
-`pulse_slab_generator`; trusted publishing then published the matching
+created pub.dev package records for `pulse_slab`, `pulse_slab_generator`, and
+`pulse_slab_persistence_io`; trusted publishing then published the matching
 `pulse_slab_flutter` `0.3.0-beta.1` artifact. The native persistence package
-uses the same bootstrap and trusted-publishing process before its first
-automated release. A generator-only correction is therefore prepared
-independently as `pulse_slab_generator 0.3.0-beta.2`, while its hosted
-dependency remains `pulse_slab ^0.3.0-beta.1`. Versions with a prerelease
-suffix, such as `0.3.0-beta.1`, create GitHub pre-releases. A version without
-one, such as `1.0.0`, creates a regular GitHub Release.
+must have its GitHub trusted publisher configured before its first automated
+release. A generator-only correction is therefore prepared independently as
+`pulse_slab_generator 0.3.0-beta.2`, while its hosted dependency remains
+`pulse_slab ^0.3.0-beta.1`. Versions with a prerelease suffix, such as
+`0.3.0-beta.1`, create GitHub pre-releases. A version without one, such as
+`1.0.0`, creates a regular GitHub Release.
 
 The first stable public release is planned as `1.0.0`, without a `-beta`
 suffix. Once that version is released, it is immutable on pub.dev. Later

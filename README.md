@@ -13,7 +13,7 @@ The package family contains four independently publishable packages:
 | Component | Purpose | Distribution |
 | --- | --- | --- |
 | [`pulse_slab`](packages/pulse_slab) | Pure Dart data plane: layouts, typed memory, handles, transactions, journals, subscriptions, byte-batch workers, and persistence contracts. | pub.dev |
-| [`pulse_slab_persistence_io`](packages/pulse_slab_persistence_io) | Optional native file-persistence backend for committed store captures and replay. | Workspace package; first pub.dev release pending |
+| [`pulse_slab_persistence_io`](packages/pulse_slab_persistence_io) | Optional native file-persistence backend for committed store captures and replay. | pub.dev |
 | [`pulse_slab_generator`](packages/pulse_slab_generator) | Optional `build_runner` companion for typed layouts, serialization, and validation source. | pub.dev development dependency |
 | [`pulse_slab_flutter`](packages/pulse_slab_flutter) | Flutter UI adapter: frame-coalesced listenables and field-filtered widgets. It re-exports the core API. | pub.dev |
 
@@ -28,8 +28,9 @@ hosted installation and local development workflow.
 
 Applications that need file-backed capture and replay opt into
 `pulse_slab_persistence_io`. Its source package supports native Dart and
-Flutter platforms; the browser-safe core API has no `dart:io` dependency. The
-first pub.dev release is pending.
+Flutter platforms; the browser-safe core API has no `dart:io` dependency. It
+is available as [`pulse_slab_persistence_io`](https://pub.dev/packages/pulse_slab_persistence_io)
+on pub.dev.
 
 The repository is a Dart Pub workspace. It resolves the local core, native
 persistence backend, generator, and Flutter adapter together during
@@ -97,9 +98,9 @@ package do not create a tag or publish a package.
 
 The first release of a new package requires the one-time pub.dev bootstrap and
 GitHub environment configuration described in [Release
-automation](docs/releasing.md). The existing package records already exist on
-pub.dev; each new package requires the same bootstrap before its first release.
-Before a release, maintainers confirm the trusted-publisher and GitHub
+automation](docs/releasing.md). The current package records already exist on
+pub.dev; each future package requires the same bootstrap before its first
+release. Before a release, maintainers confirm the trusted-publisher and GitHub
 environment settings. They then release by updating the relevant package
 version and changelog, then merging the release change to `main`. The telemetry
 application remains a repository component and is never published.

@@ -316,8 +316,8 @@ transaction is the predictable backend-null guard.
 
 The browser-safe core exports portable capture and replay contracts. Native
 append-only file storage is provided by the independently publishable
-[`pulse_slab_persistence_io`](https://github.com/JohannesHupp/pulse_slab/tree/main/packages/pulse_slab_persistence_io)
-source package; its first pub.dev release is pending:
+[`pulse_slab_persistence_io`](https://pub.dev/packages/pulse_slab_persistence_io)
+package:
 
 ```dart
 import 'dart:io';
