@@ -58,6 +58,12 @@ Create an isolated workspace containing the four publishable packages:
 dart tools/prepare_publish_packages.dart
 ~~~
 
+Verify changelog staging behavior with:
+
+~~~powershell
+dart tools/test_publish_changelog.dart
+~~~
+
 The command replaces the repository-local `publish/` directory after checking
 that it is a safe direct child of the repository. The staged workspace contains
 `packages/pulse_slab`, `packages/pulse_slab_persistence_io`,
